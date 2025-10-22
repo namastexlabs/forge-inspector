@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "vibe-kanban-web-companion",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Add point-and-click edit functionality to web apps, when used with [Vibe Kanban](https://vibekanban.com).",
   "exports": {
     "types": "./src/types.d.ts",
@@ -16,7 +16,8 @@
     "build": "echo \"Fuck build tools\"",
     "dev": "pnpm run build",
     "lint": "tsc -p ./jsconfig.json",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "bump": "pnpm version patch"
   },
   "repository": {
     "type": "git",
