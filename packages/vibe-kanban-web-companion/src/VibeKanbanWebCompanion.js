@@ -164,7 +164,7 @@ export function VibeKanbanWebCompanion() {
     (null)
   )
 
-  const [isFramed, setIsFramed] = React.useState(false)
+  const [showButton, setShowButton] = React.useState(false)
 
 
 
@@ -450,15 +450,22 @@ export function VibeKanbanWebCompanion() {
     [state, target, trigger]
   )
 
-  // Detect if running in iframe
-  React.useEffect(function detectIframe() {
+  // Listen for enable-button message from parent
+  React.useEffect(function listenForEnableButton() {
     if (typeof window === 'undefined') return
-    try {
-      setIsFramed(window.self !== window.top)
-    } catch {
-      // Accessing window.top can throw in sandboxed contexts; assume framed
-      setIsFramed(true)
+    function onMessage(event) {
+      const data = event?.data
+      if (
+        data &&
+        data.source === MESSAGE_SOURCE &&
+        data.version === MESSAGE_VERSION &&
+        data.type === 'enable-button'
+      ) {
+        setShowButton(true)
+      }
     }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
   }, [])
 
   // Send ready message to parent when component mounts
@@ -523,7 +530,7 @@ export function VibeKanbanWebCompanion() {
       }
     </style>
 
-    ${isFramed && html`
+    ${showButton && html`
       <${FloatingPortal} key="click-to-component-portal">
         <${TargetButton}
           key="click-to-component-target-button"
