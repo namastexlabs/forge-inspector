@@ -1,10 +1,10 @@
-export { VibeKanbanWebCompanion } from './VibeKanbanWebCompanion'
+export { ForgeInspector } from './ForgeInspector'
 
 export type Editor = 'vscode' | 'vscode-insiders' | 'cursor' | string
 
 export type PathModifier = (path: string) => string
 
-export type VibeKanbanWebCompanionProps = {
+export type ForgeInspectorProps = {
   editor?: Editor
   pathModifier?: PathModifier
 }

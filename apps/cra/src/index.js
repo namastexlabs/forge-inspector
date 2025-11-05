@@ -1,4 +1,4 @@
-import { VibeKanbanWebCompanion } from 'vibe-kanban-web-companion';
+import { ForgeInspector } from 'forge-inspector';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
@@ -8,7 +8,7 @@ import reportWebVitals from './reportWebVitals';
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <VibeKanbanWebCompanion />
+    <ForgeInspector />
     <App />
   </React.StrictMode>
 );

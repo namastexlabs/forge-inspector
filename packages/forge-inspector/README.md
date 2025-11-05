@@ -1,6 +1,6 @@
-# Vibe Kanban Web Companion
+# Forge Inspector
 
-This package adds point-and-click edit functionality to web apps, when used with [Vibe Kanban](https://vibekanban.com).
+This package adds point-and-click edit functionality to web apps, when used with [Automagik Forge](https://automagikforge.com).
 
 Works with frameworks like [Next.js](https://nextjs.org/),
   [Create React App](https://create-react-app.dev/),
@@ -9,11 +9,11 @@ Works with frameworks like [Next.js](https://nextjs.org/),
 
 ## Installation
 
-Even though `vibe-kanban-web-companion` is added to `dependencies`, [tree-shaking](https://esbuild.github.io/api/#tree-shaking) will remove `vibe-kanban-web-companion` from `production` builds.
+Even though `forge-inspector` is added to `dependencies`, [tree-shaking](https://esbuild.github.io/api/#tree-shaking) will remove `forge-inspector` from `production` builds.
 
 Add this dependency to your project:
 ```shell
-npm i vibe-kanban-web-companion
+npm i forge-inspector
 ```
 
 ## Usage
@@ -22,7 +22,7 @@ npm i vibe-kanban-web-companion
 <summary>Create React App</summary>
 
 ```diff
-+import { VibeKanbanWebCompanion } from 'vibe-kanban-web-companion';
++import { ForgeInspector } from 'forge-inspector';
  import React from 'react';
  import ReactDOM from 'react-dom/client';
  import './index.css';
@@ -30,7 +30,7 @@ npm i vibe-kanban-web-companion
  const root = ReactDOM.createRoot(document.getElementById('root'));
  root.render(
    <React.StrictMode>
-+    <VibeKanbanWebCompanion />
++    <ForgeInspector />
      <App />
    </React.StrictMode>
  );
@@ -42,14 +42,14 @@ npm i vibe-kanban-web-companion
 <summary>Next.js</summary>
 
 ```diff
-+import { VibeKanbanWebCompanion } from 'vibe-kanban-web-companion'
++import { ForgeInspector } from 'forge-inspector'
  import type { AppProps } from 'next/app'
  import '../styles/globals.css'
 
  function MyApp({ Component, pageProps }: AppProps) {
    return (
      <>
-+      <VibeKanbanWebCompanion />
++      <ForgeInspector />
        <Component {...pageProps} />
      </>
    )
@@ -61,7 +61,7 @@ npm i vibe-kanban-web-companion
 <summary>Vite</summary>
 
 ```diff
-+import { VibeKanbanWebCompanion } from "vibe-kanban-web-companion";
++import { ForgeInspector } from "forge-inspector";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
@@ -70,7 +70,7 @@ import "./index.css";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
-+   <VibeKanbanWebCompanion />
++   <ForgeInspector />
   </React.StrictMode>
 );
 ```

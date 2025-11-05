@@ -36,6 +36,6 @@
     ]
   },
   "devDependencies": {
-    "vibe-kanban-web-companion": "workspace:^0.0.1"
+    "forge-inspector": "workspace:^0.0.1"
   }
 }

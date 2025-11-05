@@ -1,6 +1,6 @@
 import { cssBundleHref } from "@remix-run/css-bundle";
 import type { LinksFunction, LoaderArgs } from "@remix-run/node";
-import { VibeKanbanWebCompanion } from "vibe-kanban-web-companion";
+import { ForgeInspector } from "forge-inspector";
 import { json } from "@remix-run/node";
 import {
   Links,
@@ -43,7 +43,7 @@ export default function App() {
         <ScrollRestoration />
         <Scripts />
         <LiveReload />
-        <VibeKanbanWebCompanion />
+        <ForgeInspector />
       </body>
     </html>
   );
