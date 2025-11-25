@@ -15,7 +15,10 @@ export function getReactInstancesForElement(
   while (instance) {
     instances.add(instance)
 
-    instance = instance._debugOwner
+    // Try _debugOwner first (React 16.8-18), then fall back to return (React 19+)
+    // _debugOwner points to the logical owner (component that rendered this)
+    // return points to the parent Fiber node (structural parent)
+    instance = instance._debugOwner || instance.return
   }
 
   return Array.from(instances)

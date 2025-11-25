@@ -7,17 +7,34 @@
  * @param {Fiber} instance
  */
 export function getSourceForInstance(instance) {
-  if (!instance._debugSource) {
-    return
+  // Try React 16.8-18: instance._debugSource
+  if (instance._debugSource) {
+    const {
+      // It _does_ exist!
+      // @ts-ignore Property 'columnNumber' does not exist on type 'Source'.ts(2339)
+      columnNumber = 1,
+      fileName,
+      lineNumber = 1,
+    } = instance._debugSource
+
+    return { columnNumber, fileName, lineNumber }
   }
 
-  const {
-    // It _does_ exist!
-    // @ts-ignore Property 'columnNumber' does not exist on type 'Source'.ts(2339)
-    columnNumber = 1,
-    fileName,
-    lineNumber = 1,
-  } = instance._debugSource
+  // Try React 19+: __source from memoizedProps or pendingProps
+  // Babel still adds __source prop, but React 19 doesn't copy it to _debugSource
+  const source =
+    instance.memoizedProps?.__source ||
+    instance.pendingProps?.__source
 
-  return { columnNumber, fileName, lineNumber }
+  if (source) {
+    const {
+      columnNumber = 1,
+      fileName,
+      lineNumber = 1,
+    } = source
+
+    return { columnNumber, fileName, lineNumber }
+  }
+
+  return
 }
