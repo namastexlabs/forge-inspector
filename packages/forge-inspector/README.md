@@ -1,6 +1,6 @@
 # Forge Inspector
 
-This package adds point-and-click edit functionality to web apps, when used with [Automagik Forge](https://automagikforge.com).
+This package adds point-and-click edit functionality to web apps, when used with [Automagik Forge](https://automagik.dev).
 
 Works with frameworks like [Next.js](https://nextjs.org/),
   [Create React App](https://create-react-app.dev/),
@@ -79,4 +79,4 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 
 ## Credits
 
-Thanks to [Eric Clemmons](https://github.com/ericclemmons) for creating the original [Click-To-Component](https://github.com/ericclemmons/click-to-component) library, from which our helper is forked from.
+Based on [Click-to-Component](https://github.com/ericclemmons/click-to-component) by Eric Clemmons.

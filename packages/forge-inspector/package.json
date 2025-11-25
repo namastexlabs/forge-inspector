@@ -2,7 +2,7 @@
   "type": "module",
   "name": "forge-inspector",
   "version": "0.0.6",
-  "description": "Add point-and-click edit functionality to web apps, when used with [Automagik Forge](https://automagikforge.com).",
+  "description": "Add point-and-click edit functionality to web apps, when used with [Automagik Forge](https://automagik.dev).",
   "exports": {
     "types": "./src/types.d.ts",
     "import": "./src/index.js",

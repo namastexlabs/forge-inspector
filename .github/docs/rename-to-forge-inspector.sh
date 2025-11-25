@@ -86,7 +86,7 @@ echo ""
 log_info "Updating package.json files..."
 replace_in_file "packages/vibe-kanban-web-companion/package.json" "vibe-kanban-web-companion" "forge-inspector"
 replace_in_file "packages/vibe-kanban-web-companion/package.json" "Vibe Kanban" "Automagik Forge"
-replace_in_file "packages/vibe-kanban-web-companion/package.json" "vibekanban.com" "automagikforge.com"
+replace_in_file "packages/vibe-kanban-web-companion/package.json" "vibekanban.com" "automagik.dev"
 replace_in_file "packages/vibe-kanban-web-companion/package.json" "BloopAI/vibe-kanban-web-companion" "BloopAI/forge-inspector"
 
 replace_in_file "apps/cra/package.json" "vibe-kanban-web-companion" "forge-inspector"
@@ -98,7 +98,7 @@ log_info "Updating README.md..."
 replace_in_file "packages/vibe-kanban-web-companion/README.md" "Vibe Kanban Web Companion" "Forge Inspector"
 replace_in_file "packages/vibe-kanban-web-companion/README.md" "Vibe Kanban" "Automagik Forge"
 replace_in_file "packages/vibe-kanban-web-companion/README.md" "vibe-kanban-web-companion" "forge-inspector"
-replace_in_file "packages/vibe-kanban-web-companion/README.md" "vibekanban.com" "automagikforge.com"
+replace_in_file "packages/vibe-kanban-web-companion/README.md" "vibekanban.com" "automagik.dev"
 replace_in_file "packages/vibe-kanban-web-companion/README.md" "VibeKanbanWebCompanion" "ForgeInspector"
 
 # Update TypeScript types
