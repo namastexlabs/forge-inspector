@@ -197,7 +197,7 @@ export function ForgeInspector() {
         justifyContent: 'center',
         padding: '8px',
       }}
-        title="Toggle targeting mode"
+        title="Select component for AI help"
       >
         <img
           src=${'data:image/svg+xml;utf8,' + encodeURIComponent(fiIcon)}
