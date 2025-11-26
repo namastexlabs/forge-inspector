@@ -114,6 +114,8 @@ export function deepSearchForSource(fiberNode) {
     fiberTag: fiberNode.tag,
     fiberType: typeof fiberNode.type === 'function' ? fiberNode.type.name : fiberNode.type,
     hasDebugSource: !!fiberNode._debugSource,
+    // @ts-ignore - _debugStack is an internal React 19 property
+    hasDebugStack: !!fiberNode._debugStack,
     hasDebugOwner: !!fiberNode._debugOwner,
     hasMemoizedProps: !!fiberNode.memoizedProps,
     hasPendingProps: !!fiberNode.pendingProps,
