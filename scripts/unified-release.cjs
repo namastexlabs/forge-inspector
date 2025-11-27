@@ -13,7 +13,7 @@
  *
  * Actions:
  *   nightly     - Create nightly build version (0.1.0-nightly.20251127)
- *   bump-rc     - Bump RC version (0.0.7 → 0.1.0-rc.1, or 0.1.0-rc.1 → 0.1.0-rc.2)
+ *   bump-rc     - Bump RC version (0.1.0 → 0.1.1-rc.1, or 0.1.1-rc.1 → 0.1.1-rc.2)
  *   promote     - Promote RC to stable (0.1.0-rc.2 → 0.1.0)
  */
 
@@ -116,14 +116,14 @@ function bumpRcVersion(currentVersion) {
     return `${base}-rc.${parseInt(rcNum) + 1}`;
   }
 
-  // Not an RC, bump minor and start at rc.1
+  // Not an RC, bump patch and start at rc.1
   const match = currentVersion.match(/^(\d+)\.(\d+)\.(\d+)/);
   if (!match) {
     throw new Error(`Invalid version format: ${currentVersion}`);
   }
 
   const [, major, minor, patch] = match;
-  return `${major}.${parseInt(minor) + 1}.0-rc.1`;
+  return `${major}.${minor}.${parseInt(patch) + 1}-rc.1`;
 }
 
 /**
