@@ -44,7 +44,7 @@ function parseDebugStack(debugStack) {
       // Format 3: "ComponentName@http://localhost:5175/src/path/file.tsx:line:column" (Firefox)
       const patterns = [
         /at\s+\S+\s+\(([^)]+):(\d+):(\d+)\)/, // Chrome/Edge with function name
-        /at\s+([^:]+):(\d+):(\d+)/, // Chrome/Edge without function name
+        /at\s+(.+?):(\d+):(\d+)$/, // Chrome/Edge without function name (fixed for URLs)
         /([^@]+)@([^:]+):(\d+):(\d+)/, // Firefox
       ]
 
