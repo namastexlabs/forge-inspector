@@ -28,11 +28,18 @@ concurrency:
 jobs:
   # Gate check: Skip automated commits to prevent infinite loops
   gate:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, fast-build]
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
       action: ${{ steps.detect.outputs.action }}
     steps:
+      - name: Verify runner environment
+        run: |
+          echo "🖥️  Runner: $(hostname)"
+          echo "📦 Node: $(node --version)"
+          echo "📦 pnpm: $(pnpm --version)"
+          echo "💾 Disk: $(df -h / | tail -1)"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 10
@@ -66,7 +73,7 @@ jobs:
   version:
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, fast-build]
     outputs:
       version: ${{ steps.bump.outputs.version }}
       tag: ${{ steps.bump.outputs.tag }}
@@ -108,7 +115,7 @@ jobs:
   # Publish to npm
   publish:
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, fast-build]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -164,7 +171,7 @@ jobs:
   downstream-pr:
     needs: [version, publish]
     if: needs.publish.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, fast-build]
     steps:
       - name: Checkout forge repo
         uses: actions/checkout@v4
@@ -232,7 +239,7 @@ jobs:
   github-release:
     needs: [version, publish]
     if: always() && needs.version.result == 'success' && needs.publish.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, fast-build]
     permissions:
       contents: write
     steps:
