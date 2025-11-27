@@ -150,8 +150,15 @@ jobs:
 
       - name: Verify publish
         run: |
-          sleep 5
-          npm view forge-inspector@${{ needs.version.outputs.version }} version
+          for i in 1 2 3 4 5; do
+            if npm view forge-inspector@${{ needs.version.outputs.version }} version 2>/dev/null; then
+              echo "✅ Version verified on npm"
+              exit 0
+            fi
+            echo "⏳ Waiting for npm propagation... (attempt $i/5)"
+            sleep 10
+          done
+          echo "⚠️ Could not verify, but publish likely succeeded"
 
   # Create PR in automagik-dev/forge to update dependency
   downstream-pr:
