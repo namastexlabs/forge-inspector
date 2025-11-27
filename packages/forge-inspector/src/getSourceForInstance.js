@@ -45,7 +45,7 @@ function parseDebugStack(debugStack) {
       const patterns = [
         /at\s+\S+\s+\(([^)]+):(\d+):(\d+)\)/, // Chrome/Edge with function name
         /at\s+(.+?):(\d+):(\d+)$/, // Chrome/Edge without function name (fixed for URLs)
-        /([^@]+)@([^:]+):(\d+):(\d+)/, // Firefox
+        /([^@]+)@(.+?):(\d+):(\d+)$/, // Firefox
       ]
 
       for (const pattern of patterns) {
