@@ -245,7 +245,14 @@ jobs:
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           name: ${{ needs.version.outputs.tag }}
-          body_path: .release-notes.md
+          body: |
+            ## forge-inspector ${{ needs.version.outputs.version }}
+
+            **npm tag**: `${{ needs.version.outputs.npm_tag }}`
+
+            ```bash
+            npm install forge-inspector@${{ needs.version.outputs.version }}
+            ```
           prerelease: ${{ contains(needs.version.outputs.version, '-rc.') || contains(needs.version.outputs.version, '-nightly.') }}
           generate_release_notes: true
         env:
