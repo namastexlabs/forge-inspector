@@ -1,47 +1,245 @@
-name: Release
+name: Unified Release
 
 on:
+  # Auto-trigger on merge to main
   push:
-    branches:
-      - main
+    branches: [main]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+  # Manual trigger for all release actions
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Release action to perform'
+        required: true
+        type: choice
+        options:
+          - bump-rc
+          - promote
+          - nightly
+
+# Prevent concurrent releases
+concurrency:
+  group: unified-release
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Release
+  # Gate check: Skip automated commits to prevent infinite loops
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      action: ${{ steps.detect.outputs.action }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 10
+
+      - name: Detect release action
+        id: detect
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "action=bump-rc" >> $GITHUB_OUTPUT
+            echo "📦 Push to main detected - will bump RC"
+          else
+            echo "action=${{ inputs.action }}" >> $GITHUB_OUTPUT
+            echo "🔧 Manual trigger - action: ${{ inputs.action }}"
+          fi
+
+      - name: Check for automated commit (prevent infinite loop)
+        id: check
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "Last commit: $COMMIT_MSG"
+
+          if echo "$COMMIT_MSG" | grep -Eq "^chore: (release|pre-release|bump|promote)"; then
+            echo "⏭️ Skipping automated commit to prevent loop"
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Not an automated commit, proceeding"
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          fi
+
+  # Version bump
+  version:
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+      npm_tag: ${{ steps.bump.outputs.npm_tag }}
+      is_promote: ${{ steps.bump.outputs.is_promote }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run unified release script
+        id: bump
+        run: |
+          node scripts/unified-release.cjs --action ${{ needs.gate.outputs.action }}
+
+          # Set is_promote output
+          if [[ "${{ needs.gate.outputs.action }}" == "promote" ]]; then
+            echo "is_promote=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_promote=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Push changes and tag
+        run: |
+          git push origin HEAD
+          git push origin --tags
+
+  # Publish to npm
+  publish:
+    needs: version
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
-          # This makes Actions fetch all Git history so that Changesets can generate changelogs with the correct commits
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Check if version already published
+        id: check-published
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          if npm view forge-inspector@$VERSION version 2>/dev/null; then
+            echo "Version $VERSION already published, skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Version $VERSION not published yet"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to npm
+        if: steps.check-published.outputs.skip != 'true'
+        run: |
+          cd packages/forge-inspector
+          npm publish --access public --tag ${{ needs.version.outputs.npm_tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify publish
+        run: |
+          sleep 5
+          npm view forge-inspector@${{ needs.version.outputs.version }} version
+
+  # Create PR in automagik-dev/forge to update dependency
+  downstream-pr:
+    needs: [version, publish]
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout forge repo
+        uses: actions/checkout@v4
+        with:
+          repository: automagik-dev/forge
+          token: ${{ secrets.FORGE_PR_TOKEN }}
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: '20'
 
-      - name: Cache pnpm modules
-        uses: actions/cache@v3
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - uses: pnpm/action-setup@v2
-        with:
-          run_install: true
-          version: latest
+      - name: Check if branch already exists
+        id: check-branch
+        run: |
+          BRANCH="update-forge-inspector-${{ needs.version.outputs.version }}"
+          if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            echo "Branch $BRANCH already exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Create Release Pull Request or Publish to npm
-        id: changesets
-        uses: changesets/action@v1
+      - name: Update forge-inspector version
+        if: steps.check-branch.outputs.exists != 'true'
+        run: |
+          cd frontend
+          # Update the version in package.json
+          npm pkg set "dependencies.forge-inspector=^${{ needs.version.outputs.version }}"
+
+      - name: Create PR
+        if: steps.check-branch.outputs.exists != 'true'
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          BRANCH="update-forge-inspector-${VERSION}"
+
+          git checkout -b "$BRANCH"
+          git add frontend/package.json
+          git commit -m "chore(deps): update forge-inspector to ${VERSION}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "chore(deps): update forge-inspector to ${VERSION}" \
+            --body "## Summary
+
+          Automated PR to update forge-inspector dependency.
+
+          - **New version**: ${VERSION}
+          - **npm tag**: ${{ needs.version.outputs.npm_tag }}
+          - **Source**: [forge-inspector release](https://github.com/namastexlabs/forge-inspector/releases/tag/${{ needs.version.outputs.tag }})
+
+          ---
+          🤖 Generated by [forge-inspector release workflow](https://github.com/namastexlabs/forge-inspector/actions)" \
+            --base main
+        env:
+          GH_TOKEN: ${{ secrets.FORGE_PR_TOKEN }}
+
+  # Create GitHub release
+  github-release:
+    needs: [version, publish]
+    if: always() && needs.version.result == 'success' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
         with:
-          # This expects you to have a script called release which does a build for your packages and calls changeset publish
-          publish: pnpm release
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          body_path: .release-notes.md
+          prerelease: ${{ contains(needs.version.outputs.version, '-rc.') || contains(needs.version.outputs.version, '-nightly.') }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
