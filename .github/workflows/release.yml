@@ -174,10 +174,10 @@ jobs:
           done
           echo "⚠️ Could not verify, but publish likely succeeded"
 
-  # Create PR in automagik-dev/forge to update dependency
+  # Create PR in automagik-dev/forge to update dependency (stable releases only)
   downstream-pr:
     needs: [version, publish]
-    if: needs.publish.result == 'success'
+    if: needs.publish.result == 'success' && !contains(needs.version.outputs.version, '-rc.') && !contains(needs.version.outputs.version, '-nightly.')
     runs-on: [self-hosted, Linux, X64, fast-build]
     steps:
       - name: Checkout forge repo
