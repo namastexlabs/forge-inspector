@@ -58,6 +58,13 @@ jobs:
       - name: Check for automated commit (prevent infinite loop)
         id: check
         run: |
+          # Manual triggers always proceed - loop prevention only for push events
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "✅ Manual trigger - always proceed"
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           COMMIT_MSG=$(git log -1 --pretty=%B)
           echo "Last commit: $COMMIT_MSG"
 
