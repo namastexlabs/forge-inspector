@@ -1,6 +1,13 @@
 name: Unified Release
 
 on:
+  # Auto-trigger on merge to main
+  push:
+    branches: [main]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+
   # Manual trigger for all release actions
   workflow_dispatch:
     inputs:
@@ -33,7 +40,13 @@ jobs:
       - name: Detect release action
         id: detect
         run: |
-          echo "action=${{ inputs.action }}" >> $GITHUB_OUTPUT
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "action=bump-rc" >> $GITHUB_OUTPUT
+            echo "📦 Push to main detected - will bump RC"
+          else
+            echo "action=${{ inputs.action }}" >> $GITHUB_OUTPUT
+            echo "🔧 Manual trigger - action: ${{ inputs.action }}"
+          fi
 
       - name: Check for automated commit (prevent infinite loop)
         id: check
