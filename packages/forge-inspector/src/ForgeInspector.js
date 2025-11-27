@@ -453,12 +453,14 @@ export function ForgeInspector() {
     if (typeof window === 'undefined') return
     function onMessage(event) {
       const data = event?.data
+      console.log('[ForgeInspector] Received message:', data)
       if (
         data &&
         data.source === MESSAGE_SOURCE &&
         data.version === MESSAGE_VERSION &&
         data.type === 'enable-button'
       ) {
+        console.log('[ForgeInspector] Enable button message received! Setting showButton=true')
         setShowButton(true)
       }
     }
@@ -475,6 +477,7 @@ export function ForgeInspector() {
       typeof window.parent.postMessage === 'function'
     ) {
       try {
+        console.log('[ForgeInspector] Sending ready message to parent')
         window.parent.postMessage(
           {
             source: MESSAGE_SOURCE,
@@ -483,9 +486,12 @@ export function ForgeInspector() {
           },
           '*'
         )
+        console.log('[ForgeInspector] Ready message sent successfully')
       } catch (err) {
         console.warn('[click-to-component] ready message failed', err)
       }
+    } else {
+      console.log('[ForgeInspector] Not in iframe, skipping ready message')
     }
   }, [])
 
