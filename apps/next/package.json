@@ -15,7 +15,7 @@
   "devDependencies": {
     "@types/node": "22.8.6",
     "@types/react": "18.3.12",
-    "forge-inspector": "workspace:^0.0.1",
+    "forge-inspector": "workspace:*",
     "eslint": "8.57.1",
     "eslint-config-next": "15.0.3",
     "typescript": "5.6.3"
