@@ -208,12 +208,24 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Setup pnpm
+        if: steps.check-branch.outputs.exists != 'true'
+        uses: pnpm/action-setup@v2
+        with:
+          version: latest
+
       - name: Update forge-inspector version
         if: steps.check-branch.outputs.exists != 'true'
         run: |
           cd frontend
           # Update the version in package.json
           npm pkg set "dependencies.forge-inspector=^${{ needs.version.outputs.version }}"
+
+      - name: Regenerate lockfile
+        if: steps.check-branch.outputs.exists != 'true'
+        run: |
+          # Run pnpm install to regenerate the lockfile with the new version
+          pnpm install --no-frozen-lockfile
 
       - name: Create PR
         if: steps.check-branch.outputs.exists != 'true'
@@ -222,7 +234,7 @@ jobs:
           BRANCH="update-forge-inspector-${VERSION}"
 
           git checkout -b "$BRANCH"
-          git add frontend/package.json
+          git add frontend/package.json pnpm-lock.yaml
           git commit -m "chore(deps): update forge-inspector to ${VERSION}"
           git push origin "$BRANCH"
 
