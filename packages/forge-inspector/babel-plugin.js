@@ -59,7 +59,8 @@ export default function forgeInspectorBabelPlugin({ types: t }) {
         }
 
         // Create attribute: data-forge-source="filename:line:column"
-        const sourceValue = `${filename}:${line}:${column}`
+        // Note: Babel columns are 0-based, but forge-inspector expects 1-based
+        const sourceValue = `${filename}:${line}:${column + 1}`
         const attribute = t.jSXAttribute(
           t.jSXIdentifier('data-forge-source'),
           t.stringLiteral(sourceValue)
