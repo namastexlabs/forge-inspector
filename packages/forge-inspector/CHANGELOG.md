@@ -1,4 +1,37 @@
-# click-to-react-component
+# forge-inspector
+
+## 0.0.9
+
+### Minor Changes
+
+- Add visual agent system for AI-powered QA recording
+  - `eyes()` API for screen capture and VLM-based observation
+  - `VisualAgentOrchestrator` for managing recording sessions
+  - `ScreenCaptureService` for live/file/URL screen capture
+  - `FastVLMProvider` using WebGPU for client-side inference
+  - `createConfirmStepTool` for user confirmation during recording
+
+- Add parent integration utilities for iframe embedding
+  - `createVisualAgentListener` - Event listener factory
+  - `useVisualAgentListener` - React hook for parent apps
+  - `VisualAgentOverlay` - Visual overlay component
+
+- Integrate visual agent with ForgeInspector component
+  - New Record button for starting/stopping visual recording
+  - Click events trigger AI observations during recording
+  - Parent window receives recording events and QA reports
+
+- Export debug utilities for React 19 troubleshooting
+  - `debugFiberSource`
+  - `deepSearchForSource`
+
+### Patch Changes
+
+- Fix React compatibility issues
+
+---
+
+# click-to-react-component (legacy)
 
 ## 1.1.2
 
