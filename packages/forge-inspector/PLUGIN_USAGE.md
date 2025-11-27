@@ -1,12 +1,12 @@
-# forge-inspector Plugin Usage Guide
+# forge-inspector Babel Plugin Usage Guide
 
 ## React 19 Support
 
-forge-inspector now supports React 19 through **build-time plugins** that inject source location data. These plugins provide 100% reliable source detection that works across all React versions.
+forge-inspector now supports React 19 through a **Babel plugin** that injects source location data. This provides 100% reliable source detection that works across all React versions.
 
-## Why Plugins are Needed
+## Why a Plugin is Needed
 
-React 19 removed the `_debugSource` property that previous versions used to store source location information. To work around this, forge-inspector provides plugins that inject source location data directly into your JSX elements as `data-forge-source` attributes.
+React 19 removed the `_debugSource` property that previous versions used to store source location information. To work around this, forge-inspector provides a Babel plugin that injects source location data directly into your JSX elements as `data-forge-source` attributes.
 
 **Benefits:**
 - ✅ Works with React 16.8 through React 19+
@@ -14,29 +14,9 @@ React 19 removed the `_debugSource` property that previous versions used to stor
 - ✅ No dependency on React internals
 - ✅ Industry-standard approach (used by LocatorJS, react-source-lens, etc.)
 
-## Quick Start
+## Installation
 
-### Option 1: Vite Plugin (Recommended for Vite users)
-
-```typescript
-// vite.config.ts
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import { forgeInspectorPlugin } from 'forge-inspector/vite-plugin'
-
-export default defineConfig({
-  plugins: [
-    react(),
-    forgeInspectorPlugin() // Add this line
-  ]
-})
-```
-
-**That's it!** The Vite plugin automatically injects source data in development mode.
-
-### Option 2: Babel Plugin (For all other setups)
-
-#### With Vite (alternative to Vite plugin)
+### With Vite (Recommended)
 
 ```typescript
 // vite.config.ts
@@ -54,45 +34,14 @@ export default defineConfig({
 })
 ```
 
-#### With Next.js
+**Important**: Must use `@vitejs/plugin-react` (Babel-based), NOT `@vitejs/plugin-react-swc`.
+
+### With Next.js
 
 ```javascript
 // next.config.js
 module.exports = {
-  // ... other config
-
-  // For Next.js 13+ (app directory)
-  experimental: {
-    swcPlugins: [
-      // Note: Babel plugin won't work with SWC
-      // Use the Babel-based approach instead
-    ]
-  },
-
-  // Or use Babel (Next.js 12 and below)
-  webpack: (config) => {
-    config.module.rules.push({
-      test: /\.(jsx|tsx)$/,
-      use: [
-        {
-          loader: 'babel-loader',
-          options: {
-            plugins: ['forge-inspector/babel-plugin']
-          }
-        }
-      ]
-    })
-    return config
-  }
-}
-```
-
-**For Next.js 13+**, you'll need to disable SWC and use Babel:
-
-```javascript
-// next.config.js
-module.exports = {
-  // Disable SWC, use Babel instead
+  // For Next.js 13+ with SWC, you need to disable SWC:
   swcMinify: false,
 
   babel: {
@@ -101,9 +50,9 @@ module.exports = {
 }
 ```
 
-#### With Create React App
+### With Create React App
 
-1. Eject CRA or use `react-app-rewired`:
+1. Install `react-app-rewired`:
 
 ```bash
 npm install react-app-rewired --save-dev
@@ -141,7 +90,7 @@ module.exports = function override(config) {
 }
 ```
 
-#### With Standalone Babel
+### With Standalone Babel
 
 ```javascript
 // babel.config.js
@@ -160,14 +109,6 @@ Or `.babelrc`:
   "plugins": ["forge-inspector/babel-plugin"]
 }
 ```
-
-## Fallback Detection
-
-Even **without** the plugins, forge-inspector still works with:
-- ✅ React 16.8 - 18 (via `_debugSource`)
-- ⚠️ React 19 (limited - tries `_debugStack` if available)
-
-However, for **100% reliable React 19 support**, use one of the plugins above.
 
 ## How It Works
 
@@ -191,10 +132,12 @@ However, for **100% reliable React 19 support**, use one of the plugins above.
 2. **React 19**: Tries `fiber._debugStack` (if available) ⚠️
 3. **Fallback**: Checks multiple Fiber properties ⚠️
 
+For **100% reliable React 19 support**, use the Babel plugin.
+
 ## Performance Impact
 
 **Development**: Negligible (~0.01ms per component)
-**Production**: Zero (plugins only run in `NODE_ENV=development`)
+**Production**: Zero (plugin only runs in `NODE_ENV=development`)
 
 The `data-forge-source` attributes are automatically stripped in production builds.
 
@@ -215,8 +158,8 @@ The `data-forge-source` attributes are automatically stripped in production buil
    ```
 
 3. **Check plugin is loaded**:
-   - Vite: Plugin appears in `vite.config.ts` plugins array
-   - Babel: Plugin appears in Babel config
+   - Vite: Plugin appears in Babel config within `react()` plugin
+   - Standalone: Plugin appears in `babel.config.js`
 
 ### Still Showing "Unknown (no source)"?
 
@@ -227,38 +170,32 @@ window.__FORGE_INSPECTOR_DEBUG__ = true
 
 Then Alt+Click on a component. Check console logs to see what's being detected.
 
-### Using SWC Instead of Babel?
+### Using SWC?
 
-**SWC doesn't support Babel plugins!** You have two options:
+**Problem**: SWC doesn't support Babel plugins.
 
-1. **Switch to Babel** (recommended for forge-inspector):
-   ```typescript
-   // vite.config.ts
-   import react from '@vitejs/plugin-react' // NOT -swc
+**Solution**: Switch to Babel-based setup:
 
-   export default defineConfig({
-     plugins: [
-       react({ // Babel-based
-         babel: {
-           plugins: ['forge-inspector/babel-plugin']
-         }
-       })
-     ]
-   })
-   ```
+```bash
+# For Vite:
+pnpm remove @vitejs/plugin-react-swc
+pnpm add -D @vitejs/plugin-react
+```
 
-2. **Use Vite Plugin** (works with SWC):
-   ```typescript
-   import react from '@vitejs/plugin-react-swc' // SWC is OK here
-   import { forgeInspectorPlugin } from 'forge-inspector/vite-plugin'
+```typescript
+// vite.config.ts
+import react from '@vitejs/plugin-react' // Babel-based
 
-   export default defineConfig({
-     plugins: [
-       react(),
-       forgeInspectorPlugin() // This runs separately from SWC
-     ]
-   })
-   ```
+export default defineConfig({
+  plugins: [
+    react({
+      babel: {
+        plugins: ['forge-inspector/babel-plugin']
+      }
+    })
+  ]
+})
+```
 
 ## Examples
 
@@ -268,10 +205,15 @@ Then Alt+Click on a component. Check console logs to see what's being detected.
 // vite.config.ts
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { forgeInspectorPlugin } from 'forge-inspector/vite-plugin'
 
 export default defineConfig({
-  plugins: [react(), forgeInspectorPlugin()]
+  plugins: [
+    react({
+      babel: {
+        plugins: ['forge-inspector/babel-plugin']
+      }
+    })
+  ]
 })
 ```
 
@@ -321,14 +263,12 @@ If you were using forge-inspector v0.0.6 or earlier:
 
 1. **React 16.8-18 users**: No changes needed! Everything works as before.
 
-2. **React 19 users**: Add one of the plugins above for reliable detection.
+2. **React 19 users**: Add the Babel plugin for reliable detection.
 
 3. **Update**:
    ```bash
    pnpm update forge-inspector
    ```
-
-That's it! The plugins are optional but highly recommended for React 19.
 
 ## FAQ
 
@@ -336,16 +276,19 @@ That's it! The plugins are optional but highly recommended for React 19.
 A: No, but it still works and provides more reliable detection.
 
 **Q: Will this work in production?**
-A: The plugins only run in development mode. Production builds are unaffected.
+A: The plugin only runs in development mode. Production builds are unaffected.
 
 **Q: Does this slow down my build?**
-A: No measurable impact. The plugins are very lightweight.
+A: No measurable impact. The plugin is very lightweight.
 
 **Q: Can I use this with TypeScript?**
 A: Yes! Works with `.tsx` files out of the box.
 
 **Q: What about Vue/Svelte?**
-A: These plugins are React-specific. Vue/Svelte support is separate.
+A: This plugin is React-specific. Vue/Svelte support is separate.
+
+**Q: Why not use a Vite plugin instead?**
+A: We tried - it breaks TypeScript generics. Babel's AST-based approach is more reliable.
 
 ## Support
 

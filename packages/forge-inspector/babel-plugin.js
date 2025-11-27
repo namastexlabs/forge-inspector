@@ -26,7 +26,7 @@
  * }
  */
 
-module.exports = function forgeInspectorBabelPlugin({ types: t }) {
+export default function forgeInspectorBabelPlugin({ types: t }) {
   return {
     name: 'forge-inspector',
     visitor: {

@@ -11,19 +11,13 @@
     },
     "./babel-plugin": {
       "import": "./babel-plugin.js",
-      "require": "./babel-plugin.js",
       "default": "./babel-plugin.js"
-    },
-    "./vite-plugin": {
-      "import": "./vite-plugin.js",
-      "default": "./vite-plugin.js"
     }
   },
   "types": "src/types.d.ts",
   "files": [
     "src",
-    "babel-plugin.js",
-    "vite-plugin.js"
+    "babel-plugin.js"
   ],
   "scripts": {
     "build": "echo \"Fuck build tools\"",
