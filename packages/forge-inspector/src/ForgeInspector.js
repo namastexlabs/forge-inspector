@@ -14,11 +14,14 @@ import { getPropsForInstance } from './getPropsForInstance.js'
 import { getReactInstancesForElement } from './getReactInstancesForElement.js'
 import { getSourceForInstance } from './getSourceForInstance.js'
 import { getUrl } from './getUrl.js'
+import { eyes, checkCapabilities } from './visual-agent/index.js'
 
 export const State = /** @type {const} */ ({
   IDLE: 'IDLE',
   HOVER: 'HOVER',
   SELECT: 'SELECT',
+  RECORDING: 'RECORDING',
+  PROCESSING: 'PROCESSING',
 })
 
 export const Trigger = /** @type {const} */ ({
@@ -166,9 +169,23 @@ export function ForgeInspector() {
 
   const [showButton, setShowButton] = React.useState(false)
 
+  // Visual agent state
+  const [isRecording, setIsRecording] = React.useState(false)
+  const [recordingStatus, setRecordingStatus] = React.useState('idle')
+  const [hasWebGPU, setHasWebGPU] = React.useState(false)
+  const visualAgentRef = React.useRef(null)
 
+  // Check capabilities on mount
+  React.useEffect(() => {
+    const caps = checkCapabilities()
+    setHasWebGPU(caps.webgpu)
+  }, [])
 
   const fiIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="22" x2="18" y1="12" y2="12"/><line x1="6" x2="2" y1="12" y2="12"/><line x1="12" x2="12" y1="6" y2="2"/><line x1="12" x2="12" y1="22" y2="18"/></svg>`;
+
+  const recordIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>`;
+
+  const stopIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" fill="currentColor"/></svg>`;
 
   const TargetButton = React.useCallback(
     ({ active, onToggle }) => html`
@@ -213,6 +230,63 @@ export function ForgeInspector() {
     []
   )
 
+  const RecordButton = React.useCallback(
+    ({ recording, status, disabled, onToggle }) => html`
+      <button
+        onClick=${function handleRecordClick(e) {
+          e.stopPropagation()
+          onToggle()
+        }}
+        disabled=${disabled}
+        aria-pressed=${recording}
+        style=${{
+          position: 'fixed',
+          bottom: '16px',
+          right: '72px',
+          width: '48px',
+          height: '48px',
+          borderRadius: '50%',
+          background: recording ? '#dc2626' : disabled ? '#9ca3af' : 'white',
+          color: recording ? 'white' : disabled ? '#6b7280' : 'black',
+          border: '1px solid #ccc',
+          boxShadow: '0 2px 6px rgba(0,0,0,.3)',
+          zIndex: 2147483647,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          fontSize: '18px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '8px',
+          opacity: disabled ? 0.6 : 1,
+        }}
+        title=${disabled ? 'WebGPU required for visual recording' : recording ? 'Stop recording' : 'Start visual recording'}
+      >
+        <img
+          src=${'data:image/svg+xml;utf8,' + encodeURIComponent(recording ? stopIcon : recordIcon)}
+          alt=${recording ? 'Stop' : 'Record'}
+          style=${{
+            width: '32px',
+            height: '32px',
+            filter: recording ? 'brightness(0) invert(1)' : disabled ? 'grayscale(1)' : 'none',
+          }}
+        />
+        ${status === 'processing' && html`
+          <span style=${{
+            position: 'absolute',
+            top: '-4px',
+            right: '-4px',
+            width: '12px',
+            height: '12px',
+            borderRadius: '50%',
+            background: '#f59e0b',
+            animation: 'pulse 1s infinite',
+          }}/>
+        `}
+      </button>
+    `,
+    [recordIcon, stopIcon]
+  )
+
   const toggleTargeting = React.useCallback(() => {
     if (state === State.HOVER && trigger === Trigger.BUTTON) {
       setState(State.IDLE)
@@ -222,6 +296,92 @@ export function ForgeInspector() {
       setTrigger(Trigger.BUTTON)
     }
   }, [state, trigger])
+
+  // Post message helper for visual agent
+  const postVisualMessage = React.useCallback((type, payload) => {
+    if (
+      typeof window !== 'undefined' &&
+      window.parent &&
+      window.parent !== window
+    ) {
+      try {
+        window.parent.postMessage({
+          source: MESSAGE_SOURCE,
+          version: MESSAGE_VERSION,
+          type,
+          payload
+        }, '*')
+      } catch (err) {
+        console.warn('[ForgeInspector] postMessage failed:', err)
+      }
+    }
+  }, [])
+
+  // Toggle recording
+  const toggleRecording = React.useCallback(async () => {
+    if (!hasWebGPU) return
+
+    if (isRecording) {
+      // Stop recording
+      setRecordingStatus('processing')
+      setState(State.PROCESSING)
+
+      try {
+        const agent = visualAgentRef.current
+        if (agent) {
+          const report = await agent.stop()
+          postVisualMessage('qa-report', {
+            report,
+            observations: agent.observations,
+            sessionDuration: agent.sessionDuration
+          })
+          visualAgentRef.current = null
+        }
+      } catch (err) {
+        console.error('[ForgeInspector] Error stopping recording:', err)
+      }
+
+      setIsRecording(false)
+      setRecordingStatus('idle')
+      setState(State.IDLE)
+    } else {
+      // Start recording
+      setRecordingStatus('initializing')
+
+      try {
+        const agent = eyes({
+          onObservation: (text) => {
+            postVisualMessage('recording-observation', {
+              observation: text,
+              timestamp: Date.now()
+            })
+          },
+          onStatusChange: (status) => {
+            setRecordingStatus(status)
+            if (status === 'recording') {
+              setState(State.RECORDING)
+            } else if (status === 'processing') {
+              setState(State.PROCESSING)
+            }
+          },
+          onError: (err) => {
+            console.error('[ForgeInspector] Visual agent error:', err)
+            postVisualMessage('recording-error', { error: err.message })
+          }
+        })
+
+        await agent.start()
+        visualAgentRef.current = agent
+        setIsRecording(true)
+
+        postVisualMessage('recording-started', { timestamp: Date.now() })
+      } catch (err) {
+        console.error('[ForgeInspector] Error starting recording:', err)
+        setRecordingStatus('idle')
+        setState(State.IDLE)
+      }
+    }
+  }, [hasWebGPU, isRecording, postVisualMessage])
 
   const onContextMenu = React.useCallback(
     function handleContextMenu(
@@ -260,6 +420,15 @@ export function ForgeInspector() {
       if (state === State.HOVER) {
         event.preventDefault()
         event.stopPropagation()
+      }
+
+      // Trigger visual agent observation when recording
+      if (state === State.RECORDING && visualAgentRef.current && event.target instanceof HTMLElement) {
+        const el = event.target
+        const context = `clicked ${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${el.className ? '.' + el.className.split(' ')[0] : ''}`
+        visualAgentRef.current.trigger(context).catch(err => {
+          console.warn('[ForgeInspector] Trigger observation failed:', err)
+        })
       }
 
       // Handle targeting mode click (left-click sends message to parent)
@@ -448,8 +617,8 @@ export function ForgeInspector() {
     [state, target, trigger]
   )
 
-  // Listen for enable-button message from parent
-  React.useEffect(function listenForEnableButton() {
+  // Listen for messages from parent
+  React.useEffect(function listenForParentMessages() {
     if (typeof window === 'undefined') return
     function onMessage(event) {
       const data = event?.data
@@ -457,15 +626,34 @@ export function ForgeInspector() {
       if (
         data &&
         data.source === MESSAGE_SOURCE &&
-        data.version === MESSAGE_VERSION &&
-        data.type === 'enable-button'
+        data.version === MESSAGE_VERSION
       ) {
-        console.log('[ForgeInspector] Enable button message received! Setting showButton=true')
-        setShowButton(true)
+        switch (data.type) {
+          case 'enable-button':
+            console.log('[ForgeInspector] Enable button message received! Setting showButton=true')
+            setShowButton(true)
+            break
+          case 'confirm-step-response':
+            // Handled by confirmStep tool internally
+            break
+          case 'enable-recording':
+            // Could auto-start recording here if needed
+            break
+        }
       }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
+  }, [])
+
+  // Cleanup visual agent on unmount
+  React.useEffect(() => {
+    return () => {
+      if (visualAgentRef.current) {
+        visualAgentRef.current.terminate()
+        visualAgentRef.current = null
+      }
+    }
   }, [])
 
   // Send ready message to parent when component mounts
@@ -532,16 +720,36 @@ export function ForgeInspector() {
           -webkit-focus-ring-color auto 1px
         ) !important;
       }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+
+      [data-recording-active] {
+        outline: 2px solid #dc2626 !important;
+        outline-offset: 2px;
+      }
     </style>
 
-    ${showButton && html`
-      <${FloatingPortal} key="click-to-component-portal">
+    <${FloatingPortal} key="click-to-component-portal">
+      <!-- Record Button - Always visible -->
+      <${RecordButton}
+        key="click-to-component-record-button"
+        recording=${isRecording}
+        status=${recordingStatus}
+        disabled=${!hasWebGPU}
+        onToggle=${toggleRecording}
+      />
+
+      <!-- Target Button - Only when showButton is true -->
+      ${showButton && html`
         <${TargetButton}
           key="click-to-component-target-button"
           active=${state === State.HOVER && trigger === Trigger.BUTTON}
           onToggle=${toggleTargeting}
         />
-      </${FloatingPortal}>
-    `}
+      `}
+    </${FloatingPortal}>
   `
 }
