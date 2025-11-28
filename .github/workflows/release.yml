@@ -225,7 +225,7 @@ jobs:
         if: steps.check-branch.outputs.exists != 'true'
         run: |
           # Run pnpm install to regenerate the lockfile with the new version
-          pnpm install --no-frozen-lockfile
+          pnpm install
 
       - name: Create PR
         if: steps.check-branch.outputs.exists != 'true'
