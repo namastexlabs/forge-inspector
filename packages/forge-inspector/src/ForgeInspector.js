@@ -150,6 +150,11 @@ function postOpenToParent({ editor, pathToSource, url, trigger, event, element, 
  * ForgeInspector component for click-to-edit functionality
  */
 export function ForgeInspector() {
+  // Only render when running from forge (inside an iframe)
+  if (typeof window !== 'undefined' && window.parent === window) {
+    return null
+  }
+
   const editor = 'vscode' // legacy
   const pathModifier = (path) => path // legacy
   const [state, setState] = React.useState(
