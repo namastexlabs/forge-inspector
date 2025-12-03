@@ -731,14 +731,16 @@ export function ForgeInspector() {
     </style>
 
     <${FloatingPortal} key="click-to-component-portal">
-      <!-- Record Button - Always visible -->
-      <${RecordButton}
-        key="click-to-component-record-button"
-        recording=${isRecording}
-        status=${recordingStatus}
-        disabled=${!hasWebGPU}
-        onToggle=${toggleRecording}
-      />
+      <!-- Record Button - Only when showButton is true (running from forge) -->
+      ${showButton && html`
+        <${RecordButton}
+          key="click-to-component-record-button"
+          recording=${isRecording}
+          status=${recordingStatus}
+          disabled=${!hasWebGPU}
+          onToggle=${toggleRecording}
+        />
+      `}
 
       <!-- Target Button - Only when showButton is true -->
       ${showButton && html`
