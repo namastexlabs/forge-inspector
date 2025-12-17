@@ -1,0 +1,314 @@
+/* ============================================
+   EXTERNAL URL LOADER COMPONENTS
+   Iframe-based external page testing
+   ============================================ */
+
+/* === URL INPUT === */
+.urlInput {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.urlInputRow {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.urlInputField {
+  flex: 1;
+  padding: var(--space-4) var(--space-5);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--edge-dim);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(10px);
+  transition: all var(--duration-normal) var(--ease-out-expo);
+}
+
+.urlInputField::placeholder {
+  color: var(--text-tertiary);
+  font-family: var(--font-body);
+}
+
+.urlInputField:hover {
+  border-color: var(--edge-subtle);
+}
+
+.urlInputField:focus {
+  outline: none;
+  border-color: var(--lumen-cool);
+  box-shadow: 0 0 0 3px var(--lumen-cool-glow);
+}
+
+.urlInputButton {
+  padding: var(--space-4) var(--space-6);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--lumen-cool);
+  background: var(--glass-2);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all var(--duration-normal) var(--ease-out-expo);
+  box-shadow: 0 0 20px var(--lumen-cool-glow);
+}
+
+.urlInputButton:hover:not(:disabled) {
+  background: var(--glass-3);
+  border-color: rgba(0, 229, 255, 0.5);
+  box-shadow: 0 0 30px var(--lumen-cool-intense);
+}
+
+.urlInputButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* URL History */
+.urlHistory {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.urlHistoryLabel {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.urlHistoryItem {
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  background: var(--glass-1);
+  border: 1px solid var(--edge-dim);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+}
+
+.urlHistoryItem:hover {
+  background: var(--glass-2);
+  border-color: var(--edge-subtle);
+  color: var(--text-primary);
+}
+
+/* === IFRAME VIEW === */
+.iframeContainer {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - 280px);
+  min-height: 400px;
+  background: var(--void-elevated);
+  border: 1px solid var(--edge-dim);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+.iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.iframePlaceholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+  padding: var(--space-8);
+}
+
+.iframePlaceholderIcon {
+  width: 64px;
+  height: 64px;
+  margin-bottom: var(--space-4);
+  color: var(--text-ghost);
+}
+
+.iframePlaceholderTitle {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+}
+
+.iframePlaceholderText {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  max-width: 400px;
+}
+
+.iframeLoading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--void-elevated);
+  gap: var(--space-4);
+}
+
+.iframeLoadingSpinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--glass-3);
+  border-top-color: var(--lumen-cool);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.iframeLoadingText {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* === CONNECTION STATUS === */
+.connectionStatus {
+  position: absolute;
+  bottom: var(--space-4);
+  left: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--glass-2);
+  border: 1px solid var(--edge-dim);
+  border-radius: var(--radius-full);
+  backdrop-filter: blur(20px);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.connectionStatusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.connectionStatusDotLoading {
+  background: var(--lumen-cool);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.connectionStatusDotWaiting {
+  background: var(--state-warning);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.connectionStatusDotConnected {
+  background: var(--state-success);
+  box-shadow: 0 0 8px var(--state-success);
+}
+
+.connectionStatusDotNotInstalled {
+  background: var(--state-error);
+}
+
+/* === EXTERNAL PAGE LAYOUT === */
+.externalLayout {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.externalMain {
+  display: flex;
+  flex-direction: column;
+}
+
+.externalSidebar {
+  position: sticky;
+  top: calc(80px + var(--space-12));
+}
+
+.sidebarPanel {
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.025) 0%,
+      rgba(255, 255, 255, 0.01) 100%
+    );
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--edge-dim);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+.sidebarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--edge-dim);
+}
+
+.sidebarTitle {
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sidebarContent {
+  padding: var(--space-4) var(--space-5);
+}
+
+.sidebarEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+}
+
+.sidebarEmptyIcon {
+  width: 40px;
+  height: 40px;
+  margin-bottom: var(--space-3);
+  color: var(--text-ghost);
+}
+
+.sidebarEmptyText {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .externalLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .externalSidebar {
+    position: relative;
+    top: 0;
+  }
+}

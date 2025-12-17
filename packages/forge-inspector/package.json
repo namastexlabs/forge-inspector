@@ -9,6 +9,10 @@
       "import": "./src/index.js",
       "default": "./src/index.js"
     },
+    "./visual-agent": {
+      "import": "./src/visual-agent.js",
+      "default": "./src/visual-agent.js"
+    },
     "./babel-plugin": {
       "import": "./babel-plugin.js",
       "default": "./babel-plugin.js"
@@ -20,8 +24,8 @@
     "babel-plugin.js"
   ],
   "scripts": {
-    "build": "echo \"Fuck build tools\"",
-    "dev": "pnpm run build",
+    "build": "echo \"Pure ESM - no build required\"",
+    "dev": "echo \"Pure ESM - no build required\"",
     "lint": "tsc -p ./jsconfig.json",
     "test": "echo \"Error: no test specified\" && exit 1",
     "bump": "pnpm version patch"
@@ -51,7 +55,6 @@
     "@huggingface/transformers": "^3.5.1",
     "ai": "^4.3.16",
     "htm": "^3.1.0",
-    "react-merge-refs": "^1.1.0",
     "zod": "^3.24.4"
   },
   "devDependencies": {

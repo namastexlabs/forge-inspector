@@ -14,7 +14,17 @@ import { getPropsForInstance } from './getPropsForInstance.js'
 import { getReactInstancesForElement } from './getReactInstancesForElement.js'
 import { getSourceForInstance } from './getSourceForInstance.js'
 import { getUrl } from './getUrl.js'
-import { eyes, checkCapabilities } from './visual-agent/index.js'
+
+// Visual agent is dynamically imported to avoid bundling onnxruntime-node
+// These will be loaded on-demand when recording features are used
+let visualAgentModule = null
+const getVisualAgent = async () => {
+  if (!visualAgentModule) {
+    // webpackIgnore tells webpack to skip bundling this import
+    visualAgentModule = await import(/* webpackIgnore: true */ './visual-agent/index.js')
+  }
+  return visualAgentModule
+}
 
 export const State = /** @type {const} */ ({
   IDLE: 'IDLE',
@@ -180,10 +190,15 @@ export function ForgeInspector() {
   const [hasWebGPU, setHasWebGPU] = React.useState(false)
   const visualAgentRef = React.useRef(null)
 
-  // Check capabilities on mount
+  // Check capabilities on mount (dynamic import)
   React.useEffect(() => {
-    const caps = checkCapabilities()
-    setHasWebGPU(caps.webgpu)
+    getVisualAgent().then(({ checkCapabilities }) => {
+      const caps = checkCapabilities()
+      setHasWebGPU(caps.webgpu)
+    }).catch(() => {
+      // Visual agent not available, WebGPU features disabled
+      setHasWebGPU(false)
+    })
   }, [])
 
   const fiIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-square-mouse-pointer-icon lucide-square-mouse-pointer"><path d="M12.034 12.681a.498.498 0 0 1 .647-.647l9 3.5a.5.5 0 0 1-.033.943l-3.444 1.068a1 1 0 0 0-.66.66l-1.067 3.443a.5.5 0 0 1-.943.033z"/><path d="M21 11V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/></svg>`;
@@ -354,6 +369,7 @@ export function ForgeInspector() {
       setRecordingStatus('initializing')
 
       try {
+        const { eyes } = await getVisualAgent()
         const agent = eyes({
           onObservation: (text) => {
             postVisualMessage('recording-observation', {
@@ -437,7 +453,9 @@ export function ForgeInspector() {
       }
 
       // Handle targeting mode click (left-click sends message to parent)
-      if (state === State.HOVER && trigger === Trigger.BUTTON && target instanceof HTMLElement) {
+      // Use event.target as fallback when target state hasn't been set (e.g., quick click without mousemove)
+      const clickTarget = target instanceof HTMLElement ? target : (event.target instanceof HTMLElement ? event.target : null)
+      if (state === State.HOVER && trigger === Trigger.BUTTON && clickTarget) {
 
         // Notify parent window with component info
         postOpenToParent({
@@ -446,7 +464,7 @@ export function ForgeInspector() {
           url: '',
           trigger: 'context-menu',
           event,
-          element: target,
+          element: clickTarget,
           pathModifier,
         })
 
@@ -638,6 +656,18 @@ export function ForgeInspector() {
           case 'enable-button':
             console.log('[ForgeInspector] Enable button message received! Setting showButton=true')
             setShowButton(true)
+            break
+          case 'start-selection':
+            // Parent wants us to enter selection mode
+            console.log('[ForgeInspector] Starting selection mode')
+            setState(State.HOVER)
+            setTrigger(Trigger.BUTTON)
+            break
+          case 'stop-selection':
+            // Parent wants us to exit selection mode
+            console.log('[ForgeInspector] Stopping selection mode')
+            setState(State.IDLE)
+            setTrigger(null)
             break
           case 'confirm-step-response':
             // Handled by confirmStep tool internally
