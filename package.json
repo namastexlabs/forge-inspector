@@ -17,7 +17,8 @@
   "pnpm": {
     "overrides": {
       "@types/react": "18.3.12",
-      "@types/node": "22.8.6"
+      "@types/node": "22.8.6",
+      "onnxruntime-node": "npm:@aspect-build/empty@1.0.0"
     }
   }
 }
