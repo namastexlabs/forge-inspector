@@ -17,11 +17,40 @@ export interface ElementContent {
   dom?: string
 }
 
-export interface ChatMessageData {
+// Discriminated union for type-safe message handling
+interface BaseMessage {
   id: string
-  type: MessageType
   timestamp: number
-  content: ElementContent | string
+}
+
+interface SystemMessage extends BaseMessage {
+  type: 'system' | 'error' | 'recording' | 'observation'
+  content: string
+}
+
+interface ElementMessage extends BaseMessage {
+  type: 'element'
+  content: ElementContent
+}
+
+export type ChatMessageData = SystemMessage | ElementMessage
+
+// Constants for safeStringify configuration
+const SAFE_STRINGIFY_DEFAULTS = {
+  MAX_DEPTH: 5,
+  MAX_STRING_LENGTH: 500,
+} as const
+
+/**
+ * Type guard to check if content is ElementContent
+ */
+function isElementContent(content: unknown): content is ElementContent {
+  return (
+    typeof content === 'object' &&
+    content !== null &&
+    'tag' in content &&
+    typeof (content as ElementContent).tag === 'string'
+  )
 }
 
 interface ChatMessageProps {
@@ -64,8 +93,8 @@ function formatTime(timestamp: number): string {
  */
 function safeStringify(
   obj: unknown,
-  maxDepth = 5,
-  maxStringLength = 500
+  maxDepth = SAFE_STRINGIFY_DEFAULTS.MAX_DEPTH,
+  maxStringLength = SAFE_STRINGIFY_DEFAULTS.MAX_STRING_LENGTH
 ): string {
   const seen = new WeakSet<object>()
 
@@ -108,8 +137,8 @@ function safeStringify(
       for (const key of Object.keys(value)) {
         try {
           result[key] = serialize((value as Record<string, unknown>)[key], depth + 1)
-        } catch {
-          result[key] = '[Error accessing property]'
+        } catch (err) {
+          result[key] = `[Error: ${err instanceof Error ? err.message : 'unknown'}]`
         }
       }
       return result
@@ -121,8 +150,9 @@ function safeStringify(
   try {
     const sanitized = serialize(obj, 0)
     return JSON.stringify(sanitized, null, 2)
-  } catch {
-    return String(obj)
+  } catch (err) {
+    console.warn('[ChatMessage] safeStringify failed:', err)
+    return `[Object: ${typeof obj}]`
   }
 }
 
@@ -132,8 +162,9 @@ function formatProps(props: Record<string, unknown>): string {
 
 export function ChatMessage({ message, onCopy, onOpenEditor }: ChatMessageProps) {
   const [isExpanded, setIsExpanded] = useState(true)
-  const isElement = message.type === 'element' && typeof message.content !== 'string'
-  const elementContent = isElement ? (message.content as ElementContent) : null
+  // Use discriminated union for type-safe narrowing
+  const isElement = message.type === 'element'
+  const elementContent = isElement && isElementContent(message.content) ? message.content : null
 
   const messageClass = `${styles.chatMessage} ${styles[`chatMessage${message.type.charAt(0).toUpperCase() + message.type.slice(1)}`]}`
 

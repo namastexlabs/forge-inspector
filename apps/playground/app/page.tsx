@@ -33,15 +33,15 @@ export default function PlaygroundPage() {
   // Helper to add a message (checks if mounted to prevent stale updates)
   const addMessage = useCallback((type: ChatMessageData['type'], content: ChatMessageData['content']) => {
     if (!isMountedRef.current) return
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        type,
-        timestamp: Date.now(),
-        content,
-      },
-    ])
+    // Type assertion needed because TypeScript can't narrow discriminated union
+    // when type and content come from separate parameters
+    const newMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      type,
+      timestamp: Date.now(),
+      content,
+    } as ChatMessageData
+    setMessages((prev) => [...prev, newMessage])
   }, [])
 
   // Clear connection timeout
@@ -66,7 +66,8 @@ export default function PlaygroundPage() {
           const adapter = await (navigator as { gpu: { requestAdapter: () => Promise<unknown> } }).gpu.requestAdapter()
           setWebGpuAvailable(!!adapter)
         }
-      } catch {
+      } catch (err) {
+        console.info('[Playground] WebGPU not available:', err)
         setWebGpuAvailable(false)
       }
     }
@@ -77,6 +78,20 @@ export default function PlaygroundPage() {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.source !== MESSAGE_SOURCE) return
+
+      // Validate origin - must match loaded URL's origin for security
+      if (url) {
+        try {
+          const expectedOrigin = new URL(url).origin
+          if (event.origin !== expectedOrigin) {
+            console.warn('[Playground] Rejected message from unexpected origin:', event.origin, 'expected:', expectedOrigin)
+            return
+          }
+        } catch (err) {
+          console.warn('[Playground] Failed to validate message origin:', err)
+          return
+        }
+      }
 
       console.log('[Playground] Received message:', event.data.type)
 
@@ -153,7 +168,7 @@ export default function PlaygroundPage() {
 
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [addMessage, clearConnectionTimeout])
+  }, [addMessage, clearConnectionTimeout, url])
 
   // Handle URL load
   const handleLoadUrl = useCallback((newUrl: string) => {

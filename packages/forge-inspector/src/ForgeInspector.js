@@ -43,6 +43,24 @@ export const Trigger = /** @type {const} */ ({
 const MESSAGE_SOURCE = 'click-to-component'
 const MESSAGE_VERSION = 1
 
+// Allowed development origins for postMessage security
+// Using explicit allowlist instead of prefix matching to prevent
+// malicious scripts on arbitrary localhost ports from controlling the inspector
+const ALLOWED_DEV_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3333',
+  'http://localhost:5173',  // Vite default
+  'http://localhost:5174',
+  'http://localhost:8080',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://127.0.0.1:3333',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5174',
+  'http://127.0.0.1:8080',
+]
+
 /**
  * Get the target origin for postMessage.
  * Uses document.referrer in iframe context, falls back to same origin.
@@ -56,8 +74,9 @@ function getTargetOrigin() {
     try {
       const url = new URL(document.referrer)
       return url.origin
-    } catch {
-      // Invalid referrer URL
+    } catch (err) {
+      // Invalid referrer URL - log for debugging
+      console.warn('[ForgeInspector] Invalid referrer URL, falling back to same-origin:', err)
     }
   }
 
@@ -82,18 +101,18 @@ function isValidMessageOrigin(event) {
     try {
       const parentOrigin = new URL(document.referrer).origin
       return event.origin === parentOrigin
-    } catch {
-      // Invalid referrer, fall through to permissive check
+    } catch (err) {
+      // Invalid referrer, fall through to allowlist check
+      console.debug('[ForgeInspector] Referrer validation failed, using dev origin allowlist:', err)
     }
   }
 
-  // If no referrer, accept from same origin or localhost origins (dev mode)
+  // If no referrer, accept from same origin or allowed dev origins
+  // Using explicit allowlist instead of prefix matching for security
   const origin = event.origin
   return (
     origin === window.location.origin ||
-    origin.startsWith('http://localhost') ||
-    origin.startsWith('http://127.0.0.1') ||
-    origin.startsWith('https://localhost')
+    ALLOWED_DEV_ORIGINS.includes(origin)
   )
 }
 
@@ -413,6 +432,7 @@ export function ForgeInspector() {
         }
       } catch (err) {
         console.error('[ForgeInspector] Error stopping recording:', err)
+        postVisualMessage('recording-error', { error: `Stop failed: ${err.message}` })
       }
 
       setIsRecording(false)
@@ -452,6 +472,7 @@ export function ForgeInspector() {
         postVisualMessage('recording-started', { timestamp: Date.now() })
       } catch (err) {
         console.error('[ForgeInspector] Error starting recording:', err)
+        postVisualMessage('recording-error', { error: err.message })
         setRecordingStatus('idle')
         setState(State.IDLE)
       }
