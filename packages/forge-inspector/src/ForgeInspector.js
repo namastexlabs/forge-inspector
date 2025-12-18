@@ -44,6 +44,60 @@ const MESSAGE_SOURCE = 'click-to-component'
 const MESSAGE_VERSION = 1
 
 /**
+ * Get the target origin for postMessage.
+ * Uses document.referrer in iframe context, falls back to same origin.
+ * @returns {string}
+ */
+function getTargetOrigin() {
+  if (typeof window === 'undefined') return '*'
+
+  // Try to get origin from document.referrer (parent frame URL)
+  if (document.referrer) {
+    try {
+      const url = new URL(document.referrer)
+      return url.origin
+    } catch {
+      // Invalid referrer URL
+    }
+  }
+
+  // Fallback to same origin
+  return window.location.origin
+}
+
+/**
+ * Validate if a message event origin is trusted.
+ * In dev context, we trust the parent window origin.
+ * @param {MessageEvent} event
+ * @returns {boolean}
+ */
+function isValidMessageOrigin(event) {
+  if (typeof window === 'undefined') return false
+
+  // Must be from parent window
+  if (event.source !== window.parent) return false
+
+  // In dev context, validate against referrer origin if available
+  if (document.referrer) {
+    try {
+      const parentOrigin = new URL(document.referrer).origin
+      return event.origin === parentOrigin
+    } catch {
+      // Invalid referrer, fall through to permissive check
+    }
+  }
+
+  // If no referrer, accept from same origin or localhost origins (dev mode)
+  const origin = event.origin
+  return (
+    origin === window.location.origin ||
+    origin.startsWith('http://localhost') ||
+    origin.startsWith('http://127.0.0.1') ||
+    origin.startsWith('https://localhost')
+  )
+}
+
+/**
  * Extract component instances data for a target element
  * @param {HTMLElement} target
  * @param {import('./types.js').PathModifier} pathModifier
@@ -148,7 +202,7 @@ function postOpenToParent({ editor, pathToSource, url, trigger, event, element, 
       window.parent !== window &&
       typeof window.parent.postMessage === 'function'
     ) {
-      window.parent.postMessage(message, '*') // dev-only, permissive
+      window.parent.postMessage(message, getTargetOrigin())
     }
   } catch (err) {
     // Never break product flows due to messaging
@@ -330,7 +384,7 @@ export function ForgeInspector() {
           version: MESSAGE_VERSION,
           type,
           payload
-        }, '*')
+        }, getTargetOrigin())
       } catch (err) {
         console.warn('[ForgeInspector] postMessage failed:', err)
       }
@@ -644,8 +698,11 @@ export function ForgeInspector() {
   React.useEffect(function listenForParentMessages() {
     if (typeof window === 'undefined') return
     function onMessage(event) {
+      // Validate message origin for security
+      if (!isValidMessageOrigin(event)) return
+
       const data = event?.data
-      // Only log messages from our own source to reduce noise
+      // Only process messages from our own source
       if (
         data &&
         data.source === MESSAGE_SOURCE &&
@@ -707,7 +764,7 @@ export function ForgeInspector() {
             version: MESSAGE_VERSION,
             type: 'ready'
           },
-          '*'
+          getTargetOrigin()
         )
       } catch (err) {
         console.warn('[ForgeInspector] ready message failed', err)

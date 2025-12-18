@@ -56,12 +56,78 @@ function formatTime(timestamp: number): string {
   })
 }
 
-function formatProps(props: Record<string, unknown>): string {
-  try {
-    return JSON.stringify(props, null, 2)
-  } catch {
-    return String(props)
+/**
+ * Safely stringify an object, handling circular references and limiting depth.
+ * @param obj - The object to stringify
+ * @param maxDepth - Maximum nesting depth (default: 5)
+ * @param maxStringLength - Maximum length for string values (default: 500)
+ */
+function safeStringify(
+  obj: unknown,
+  maxDepth = 5,
+  maxStringLength = 500
+): string {
+  const seen = new WeakSet<object>()
+
+  function serialize(value: unknown, depth: number): unknown {
+    // Handle primitives
+    if (value === null || value === undefined) return value
+    if (typeof value === 'boolean' || typeof value === 'number') return value
+
+    // Truncate long strings
+    if (typeof value === 'string') {
+      if (value.length > maxStringLength) {
+        return value.slice(0, maxStringLength) + '...[truncated]'
+      }
+      return value
+    }
+
+    // Handle functions
+    if (typeof value === 'function') {
+      return '[Function]'
+    }
+
+    // Check depth limit
+    if (depth > maxDepth) {
+      return '[Max depth exceeded]'
+    }
+
+    // Handle objects and arrays
+    if (typeof value === 'object') {
+      // Check for circular reference
+      if (seen.has(value)) {
+        return '[Circular]'
+      }
+      seen.add(value)
+
+      if (Array.isArray(value)) {
+        return value.map((item) => serialize(item, depth + 1))
+      }
+
+      const result: Record<string, unknown> = {}
+      for (const key of Object.keys(value)) {
+        try {
+          result[key] = serialize((value as Record<string, unknown>)[key], depth + 1)
+        } catch {
+          result[key] = '[Error accessing property]'
+        }
+      }
+      return result
+    }
+
+    return String(value)
   }
+
+  try {
+    const sanitized = serialize(obj, 0)
+    return JSON.stringify(sanitized, null, 2)
+  } catch {
+    return String(obj)
+  }
+}
+
+function formatProps(props: Record<string, unknown>): string {
+  return safeStringify(props)
 }
 
 export function ChatMessage({ message, onCopy, onOpenEditor }: ChatMessageProps) {
@@ -148,7 +214,7 @@ export function ChatMessage({ message, onCopy, onOpenEditor }: ChatMessageProps)
                   {onCopy && (
                     <button
                       className={styles.chatMessageAction}
-                      onClick={() => onCopy(JSON.stringify(elementContent, null, 2))}
+                      onClick={() => onCopy(safeStringify(elementContent))}
                     >
                       Copy
                     </button>
