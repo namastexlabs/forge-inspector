@@ -79,18 +79,11 @@ export default function PlaygroundPage() {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.source !== MESSAGE_SOURCE) return
 
-      // Validate origin - must match loaded URL's origin for security
-      if (url) {
-        try {
-          const expectedOrigin = new URL(url).origin
-          if (event.origin !== expectedOrigin) {
-            console.warn('[Playground] Rejected message from unexpected origin:', event.origin, 'expected:', expectedOrigin)
-            return
-          }
-        } catch (err) {
-          console.warn('[Playground] Failed to validate message origin:', err)
-          return
-        }
+      // Validate source - must come from our iframe window
+      // Using source validation instead of origin to handle redirects (HTTP->HTTPS, domain canonicalization)
+      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) {
+        console.warn('[Playground] Rejected message from unexpected source')
+        return
       }
 
       console.log('[Playground] Received message:', event.data.type)
@@ -168,7 +161,7 @@ export default function PlaygroundPage() {
 
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [addMessage, clearConnectionTimeout, url])
+  }, [addMessage, clearConnectionTimeout])
 
   // Handle URL load
   const handleLoadUrl = useCallback((newUrl: string) => {
@@ -205,9 +198,9 @@ export default function PlaygroundPage() {
 
   // Send message to iframe
   const sendToIframe = useCallback((type: string, payload?: unknown) => {
-    if (iframeRef.current?.contentWindow && url) {
-      // Use the iframe's origin for security
-      const targetOrigin = new URL(url).origin
+    if (iframeRef.current?.contentWindow) {
+      // Use '*' for targetOrigin since iframe may have redirected
+      // This is safe because we validate incoming messages by source (window reference)
       iframeRef.current.contentWindow.postMessage(
         {
           source: MESSAGE_SOURCE,
@@ -215,10 +208,10 @@ export default function PlaygroundPage() {
           type,
           payload,
         },
-        targetOrigin
+        '*'
       )
     }
-  }, [url])
+  }, [])
 
   // Handle select element toggle
   const handleToggleSelection = useCallback(() => {
