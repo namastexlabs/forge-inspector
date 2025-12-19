@@ -128,6 +128,7 @@ function isValidMessageOrigin(event) {
 
 /**
  * Extract component instances data for a target element
+ * Returns component info even without source location (for production builds)
  * @param {HTMLElement} target
  * @param {import('./types.js').PathModifier} pathModifier
  * @returns {Array}
@@ -135,24 +136,30 @@ function isValidMessageOrigin(event) {
 function getComponentInstances(target, pathModifier) {
   if (!target) return []
 
-  const instances = getReactInstancesForElement(target).filter((instance) =>
-    getSourceForInstance(instance)
-  )
+  // Get all React instances - don't filter by source availability
+  // This allows component names to be returned even in production builds
+  // where _debugSource and _debugStack are stripped
+  const instances = getReactInstancesForElement(target).filter((instance) => {
+    // Filter out non-component fibers (HostComponent = DOM elements like div, button)
+    // We want FunctionComponent (0), ClassComponent (1), ForwardRef (11), Memo (14, 15)
+    const tag = instance.tag
+    return tag === 0 || tag === 1 || tag === 11 || tag === 14 || tag === 15
+  })
 
   return instances.map((instance) => {
     const name = getDisplayNameForInstance(instance)
     const source = getSourceForInstance(instance)
-    const path = getPathToSource(source, pathModifier)
+    const path = source ? getPathToSource(source, pathModifier) : null
     const props = getPropsForInstance(instance)
 
     return {
       name,
       props,
-      source: {
+      source: source ? {
         fileName: source.fileName,
         lineNumber: source.lineNumber,
         columnNumber: source.columnNumber
-      },
+      } : null,
       pathToSource: path
     }
   })
