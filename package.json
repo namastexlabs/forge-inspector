@@ -18,7 +18,8 @@
     "overrides": {
       "@types/react": "18.3.12",
       "@types/node": "22.8.6",
-      "onnxruntime-node": "npm:noop-package@1.0.0"
+      "onnxruntime-node": "npm:noop-package@1.0.0",
+      "boolean": "npm:noop-package@1.0.0"
     }
   }
 }
