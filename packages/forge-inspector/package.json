@@ -3,11 +3,18 @@
   "name": "forge-inspector",
   "version": "0.2.0-rc.10",
   "description": "Add point-and-click edit functionality to web apps, when used with [Automagik Forge](https://automagik.dev).",
+  "bin": {
+    "forge-inspector": "./bin/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./src/types.d.ts",
       "import": "./src/index.js",
       "default": "./src/index.js"
+    },
+    "./always": {
+      "import": "./src/always.js",
+      "default": "./src/always.js"
     },
     "./visual-agent": {
       "import": "./src/visual-agent.js",
@@ -21,6 +28,8 @@
   "types": "src/types.d.ts",
   "files": [
     "src",
+    "bin",
+    "playground",
     "babel-plugin.js"
   ],
   "scripts": {

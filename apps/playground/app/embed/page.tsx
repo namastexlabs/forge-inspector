@@ -4,9 +4,10 @@ import dynamic from 'next/dynamic'
 import { Showcase } from '../components/samples'
 import styles from '../components/layout/layout.module.css'
 
-// Dynamic import to avoid SSR issues with ForgeInspector
+// Dynamic import using /always export to ensure it works in production builds
+// The main export returns null in production for tree-shaking in user apps
 const ForgeInspector = dynamic(
-  () => import('forge-inspector').then((mod) => mod.ForgeInspector),
+  () => import('forge-inspector/always').then((mod) => mod.ForgeInspector),
   { ssr: false }
 )
 
