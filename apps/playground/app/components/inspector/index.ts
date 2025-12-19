@@ -1,4 +1,5 @@
 export { ChatDrawer } from './ChatDrawer'
+export { ChatErrorBoundary } from './ChatErrorBoundary'
 export { ChatMessage } from './ChatMessage'
 export type { ChatMessageData, ElementContent, MessageType } from './ChatMessage'
 export { RecordingOverlay } from './RecordingOverlay'

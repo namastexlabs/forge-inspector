@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Header } from './components/layout'
-import { ChatDrawer, RecordingOverlay } from './components/inspector'
+import { ChatDrawer, ChatErrorBoundary, RecordingOverlay } from './components/inspector'
 import { ChatMessageData, ElementContent } from './components/inspector/ChatMessage'
 import { UrlInput, IframeView, ConnectionStatus, type ConnectionState } from './components/external'
 import styles from './components/layout/layout.module.css'
@@ -18,6 +18,8 @@ const CONNECTION_TIMEOUT = 5000
 export default function PlaygroundPage() {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const demoTimeoutsRef = useRef<NodeJS.Timeout[]>([])
+  const isMountedRef = useRef(true)
 
   // State
   const [url, setUrl] = useState<string | null>(null)
@@ -28,17 +30,18 @@ export default function PlaygroundPage() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(true)
   const [messages, setMessages] = useState<ChatMessageData[]>([])
 
-  // Helper to add a message
+  // Helper to add a message (checks if mounted to prevent stale updates)
   const addMessage = useCallback((type: ChatMessageData['type'], content: ChatMessageData['content']) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        type,
-        timestamp: Date.now(),
-        content,
-      },
-    ])
+    if (!isMountedRef.current) return
+    // Type assertion needed because TypeScript can't narrow discriminated union
+    // when type and content come from separate parameters
+    const newMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      type,
+      timestamp: Date.now(),
+      content,
+    } as ChatMessageData
+    setMessages((prev) => [...prev, newMessage])
   }, [])
 
   // Clear connection timeout
@@ -49,17 +52,22 @@ export default function PlaygroundPage() {
     }
   }, [])
 
+  // Clear demo timeouts
+  const clearDemoTimeouts = useCallback(() => {
+    demoTimeoutsRef.current.forEach(clearTimeout)
+    demoTimeoutsRef.current = []
+  }, [])
+
   // Check WebGPU availability
   useEffect(() => {
     const checkCapabilities = async () => {
       try {
-        // @ts-expect-error - WebGPU types may not be available
-        if (navigator.gpu) {
-          // @ts-expect-error - WebGPU types may not be available
-          const adapter = await navigator.gpu.requestAdapter()
+        if ('gpu' in navigator) {
+          const adapter = await (navigator as { gpu: { requestAdapter: () => Promise<unknown> } }).gpu.requestAdapter()
           setWebGpuAvailable(!!adapter)
         }
-      } catch {
+      } catch (err) {
+        console.info('[Playground] WebGPU not available:', err)
         setWebGpuAvailable(false)
       }
     }
@@ -71,6 +79,13 @@ export default function PlaygroundPage() {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.source !== MESSAGE_SOURCE) return
 
+      // Validate source - must come from our iframe window
+      // Using source validation instead of origin to handle redirects (HTTP->HTTPS, domain canonicalization)
+      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) {
+        console.warn('[Playground] Rejected message from unexpected source')
+        return
+      }
+
       console.log('[Playground] Received message:', event.data.type)
 
       switch (event.data.type) {
@@ -80,14 +95,14 @@ export default function PlaygroundPage() {
           clearConnectionTimeout()
           setConnectionState('connected')
           // Send enable-button message to show the selection/recording buttons
-          if (event.source) {
+          if (event.source && event.origin) {
             (event.source as Window).postMessage(
               {
                 source: MESSAGE_SOURCE,
                 version: MESSAGE_VERSION,
                 type: 'enable-button',
               },
-              '*'
+              event.origin
             )
           }
           // Add system message
@@ -184,6 +199,8 @@ export default function PlaygroundPage() {
   // Send message to iframe
   const sendToIframe = useCallback((type: string, payload?: unknown) => {
     if (iframeRef.current?.contentWindow) {
+      // Use '*' for targetOrigin since iframe may have redirected
+      // This is safe because we validate incoming messages by source (window reference)
       iframeRef.current.contentWindow.postMessage(
         {
           source: MESSAGE_SOURCE,
@@ -212,12 +229,14 @@ export default function PlaygroundPage() {
   // Handle recording toggle
   const handleToggleRecording = useCallback(() => {
     if (isRecording) {
-      // Stop recording - this is handled by the iframe's ForgeInspector
+      // Stop recording - clear any pending demo timeouts
+      clearDemoTimeouts()
       setIsRecording(false)
     } else {
       // Start recording
       setIsRecording(true)
       setMessages([]) // Clear messages on new recording
+      clearDemoTimeouts() // Clear any existing demo timeouts
 
       // Demo observations since recording requires the visual agent
       const demoObservations = [
@@ -230,12 +249,13 @@ export default function PlaygroundPage() {
       addMessage('recording', 'Recording started. Observing page interactions...')
 
       demoObservations.forEach((text, index) => {
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
           addMessage('observation', text)
         }, (index + 1) * 2000)
+        demoTimeoutsRef.current.push(timeoutId)
       })
     }
-  }, [isRecording, addMessage])
+  }, [isRecording, addMessage, clearDemoTimeouts])
 
   // Handle copy message
   const handleCopyMessage = useCallback((content: string) => {
@@ -256,10 +276,15 @@ export default function PlaygroundPage() {
     setIsDrawerOpen(false)
   }, [])
 
-  // Cleanup timeout on unmount
+  // Set mounted ref and cleanup on unmount
   useEffect(() => {
-    return () => clearConnectionTimeout()
-  }, [clearConnectionTimeout])
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+      clearConnectionTimeout()
+      clearDemoTimeouts()
+    }
+  }, [clearConnectionTimeout, clearDemoTimeouts])
 
   return (
     <>
@@ -306,18 +331,22 @@ export default function PlaygroundPage() {
         </div>
       </main>
 
-      <ChatDrawer
-        messages={messages}
-        isOpen={isDrawerOpen}
-        isSelecting={isSelecting}
-        isRecording={isRecording}
-        webGpuAvailable={webGpuAvailable}
-        onToggleSelection={handleToggleSelection}
-        onToggleRecording={handleToggleRecording}
-        onClose={handleCloseDrawer}
-        onCopyMessage={handleCopyMessage}
-        onOpenEditor={handleOpenEditor}
-      />
+      <ChatErrorBoundary
+        onError={(error) => console.error('[ChatDrawer Error]', error)}
+      >
+        <ChatDrawer
+          messages={messages}
+          isOpen={isDrawerOpen}
+          isSelecting={isSelecting}
+          isRecording={isRecording}
+          webGpuAvailable={webGpuAvailable}
+          onToggleSelection={handleToggleSelection}
+          onToggleRecording={handleToggleRecording}
+          onClose={handleCloseDrawer}
+          onCopyMessage={handleCopyMessage}
+          onOpenEditor={handleOpenEditor}
+        />
+      </ChatErrorBoundary>
 
       <RecordingOverlay isRecording={isRecording} />
     </>

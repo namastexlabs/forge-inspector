@@ -22,8 +22,8 @@ export function UrlInput({ onLoad, isLoading = false }: UrlInputProps) {
       if (stored) {
         setHistory(JSON.parse(stored))
       }
-    } catch {
-      // Ignore localStorage errors
+    } catch (error) {
+      console.warn('Failed to load URL history from localStorage:', error)
     }
   }, [])
 
@@ -47,8 +47,8 @@ export function UrlInput({ onLoad, isLoading = false }: UrlInputProps) {
     setHistory(newHistory)
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(newHistory))
-    } catch {
-      // Ignore localStorage errors
+    } catch (error) {
+      console.warn('Failed to save URL history to localStorage:', error)
     }
 
     onLoad(normalizedUrl)
