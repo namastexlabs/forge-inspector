@@ -178,3 +178,52 @@ export function getSourceForInstance(instance) {
 
   return
 }
+
+/**
+ * Get source from DOM element's data-forge-source attribute
+ * Fallback when React internals don't have source info
+ * The Babel plugin injects data-forge-source="fileName:lineNumber:columnNumber"
+ * @param {HTMLElement | null} element
+ * @returns {{fileName: string, lineNumber: number, columnNumber: number} | undefined}
+ */
+export function getSourceFromElement(element) {
+  if (!element) return undefined
+
+  // Walk up DOM tree to find nearest element with source attribute
+  let current = element
+  while (current && current !== document.body && current !== document.documentElement) {
+    const forgeSource = current.getAttribute('data-forge-source')
+    if (forgeSource) {
+      const parts = forgeSource.split(':')
+      // Handle Windows paths which have drive letter with colon (e.g., C:/path)
+      // Format: "C:/path/file.tsx:line:col" or "/path/file.tsx:line:col"
+      let fileName, lineNumber, columnNumber
+
+      if (parts.length >= 3) {
+        // Last two parts are always line and column
+        columnNumber = parseInt(parts[parts.length - 1], 10)
+        lineNumber = parseInt(parts[parts.length - 2], 10)
+        // Everything before is the file path (join back in case of Windows paths)
+        fileName = parts.slice(0, parts.length - 2).join(':')
+      } else if (parts.length === 2) {
+        // No column number - default to 1
+        lineNumber = parseInt(parts[parts.length - 1], 10)
+        fileName = parts.slice(0, parts.length - 1).join(':')
+        columnNumber = 1
+      } else {
+        continue
+      }
+
+      if (fileName && !isNaN(lineNumber)) {
+        return {
+          fileName,
+          lineNumber,
+          columnNumber: isNaN(columnNumber) ? 1 : columnNumber,
+        }
+      }
+    }
+    current = current.parentElement
+  }
+
+  return undefined
+}

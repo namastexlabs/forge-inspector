@@ -3,6 +3,9 @@
    Design System: "Luminous Void"
    ============================================ */
 
+/* === FONTS === */
+@import url('https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@300;400;500;700;800;900&family=Manrope:wght@300;400;500;600;700;800&family=Chivo+Mono:ital,wght@0,100..900;1,100..900&display=swap');
+
 /* === RESET === */
 *,
 *::before,
@@ -60,9 +63,9 @@
   --state-error: #ff3852;
 
   /* === TYPOGRAPHY === */
-  --font-display: 'Outfit', system-ui, sans-serif;
-  --font-body: 'Inter Tight', system-ui, sans-serif;
-  --font-mono: 'Geist Mono', 'SF Mono', monospace;
+  --font-display: 'Alegreya Sans', system-ui, sans-serif;
+  --font-body: 'Manrope', system-ui, sans-serif;
+  --font-mono: 'Chivo Mono', 'Courier New', monospace;
 
   /* Type Scale */
   --text-xs: 0.75rem;

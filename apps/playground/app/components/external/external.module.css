@@ -230,10 +230,7 @@
 
 /* === EXTERNAL PAGE LAYOUT === */
 .externalLayout {
-  display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: var(--space-6);
-  align-items: start;
+  display: block;
 }
 
 .externalMain {
@@ -311,4 +308,105 @@
     position: relative;
     top: 0;
   }
+}
+
+/* === INSTALLATION PROMPT === */
+.installPromptButton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px dashed var(--edge-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+}
+
+.installPromptButton:hover {
+  color: var(--text-secondary);
+  border-color: var(--lumen-cool);
+  background: rgba(0, 229, 255, 0.05);
+}
+
+.installPromptButtonCopied {
+  color: var(--state-success);
+  border-color: var(--state-success);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.installPromptIcon {
+  font-size: var(--text-base);
+}
+
+/* === NOT INSTALLED WARNING === */
+.notInstalledBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: linear-gradient(
+    135deg,
+    rgba(251, 191, 36, 0.1) 0%,
+    rgba(251, 191, 36, 0.05) 100%
+  );
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: var(--radius-lg);
+  margin-top: var(--space-4);
+}
+
+.notInstalledIcon {
+  font-size: var(--text-xl);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.notInstalledContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+}
+
+.notInstalledTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--state-warning);
+}
+
+.notInstalledText {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.notInstalledActions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.notInstalledCopyButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--lumen-warm);
+  background: rgba(255, 107, 64, 0.15);
+  border: 1px solid rgba(255, 107, 64, 0.4);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out-expo);
+}
+
+.notInstalledCopyButton:hover {
+  background: rgba(255, 107, 64, 0.25);
+  border-color: rgba(255, 107, 64, 0.6);
 }

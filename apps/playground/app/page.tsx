@@ -7,6 +7,7 @@ import { ChatMessageData, ElementContent } from './components/inspector/ChatMess
 import { UrlInput, IframeView, ConnectionStatus, type ConnectionState } from './components/external'
 import styles from './components/layout/layout.module.css'
 import externalStyles from './components/external/external.module.css'
+import inspectorStyles from './components/inspector/inspector.module.css'
 
 // Message source for iframe communication
 const MESSAGE_SOURCE = 'click-to-component'
@@ -14,6 +15,40 @@ const MESSAGE_VERSION = 1
 
 // Connection timeout in ms
 const CONNECTION_TIMEOUT = 5000
+
+// Installation prompt for AI agents
+const INSTALL_PROMPT = `Goal: Install and integrate the forge-inspector so it renders at the app root in development.
+
+Do:
+1) Detect package manager from lockfiles and use it:
+   - pnpm-lock.yaml → pnpm add forge-inspector
+   - yarn.lock → yarn add forge-inspector
+   - package-lock.json → npm i forge-inspector
+   - bun.lockb → bun add forge-inspector
+   If already listed in package.json dependencies, skip install.
+
+2) Detect framework and app entry:
+   - Next.js (pages router): pages/_app.(tsx|js)
+   - Next.js (app router): app/layout.(tsx|js) or an app/providers.(tsx|js)
+   - Vite/CRA: src/main.(tsx|jsx|ts|js) and src/App.(tsx|jsx|ts|js)
+   - Monorepo: operate in the correct package for the web app.
+   Confirm by reading package.json and directory structure.
+
+3) Integrate the component:
+   import { ForgeInspector } from 'forge-inspector';
+   - Vite/CRA: render <ForgeInspector /> at the app root.
+   - Next.js (pages): render in pages/_app.*
+   - Next.js (app): render in app/layout.* or a client providers component.
+   - For Next.js, if SSR issues arise, use dynamic import with ssr: false.
+
+4) Verify:
+   - Type-check, lint/format if configured.
+   - Ensure it compiles and renders without SSR/hydration errors.
+
+Acceptance:
+- forge-inspector is installed in the correct package.
+- The component is rendered once at the app root without SSR/hydration errors.
+- Build/type-check passes.`
 
 export default function PlaygroundPage() {
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -29,6 +64,10 @@ export default function PlaygroundPage() {
   const [isRecording, setIsRecording] = useState(false)
   const [isDrawerOpen, setIsDrawerOpen] = useState(true)
   const [messages, setMessages] = useState<ChatMessageData[]>([])
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [installPromptCopied, setInstallPromptCopied] = useState(false)
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const installCopyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Helper to add a message (checks if mounted to prevent stale updates)
   const addMessage = useCallback((type: ChatMessageData['type'], content: ChatMessageData['content']) => {
@@ -56,6 +95,18 @@ export default function PlaygroundPage() {
   const clearDemoTimeouts = useCallback(() => {
     demoTimeoutsRef.current.forEach(clearTimeout)
     demoTimeoutsRef.current = []
+  }, [])
+
+  // Show toast notification
+  const showToast = useCallback((message: string) => {
+    // Clear any existing toast timeout
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current)
+    }
+    setToastMessage(message)
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null)
+    }, 2500)
   }, [])
 
   // Check WebGPU availability
@@ -94,7 +145,7 @@ export default function PlaygroundPage() {
           // Clear the connection timeout since we got a response
           clearConnectionTimeout()
           setConnectionState('connected')
-          // Send enable-button message to show the selection/recording buttons
+          // Send enable-button message to signal playground mode (inspector hides floating buttons, playground controls selection)
           if (event.source && event.origin) {
             (event.source as Window).postMessage(
               {
@@ -113,7 +164,7 @@ export default function PlaygroundPage() {
           if (event.data.payload?.selected) {
             const { selected, clickedElement } = event.data.payload
 
-            // Create element content for the message
+            // Create element content for the message with enhanced AI context
             const elementContent: ElementContent = {
               tag: clickedElement?.tag || 'unknown',
               componentName: selected.name || undefined,
@@ -122,11 +173,30 @@ export default function PlaygroundPage() {
                 lineNumber: selected.source.lineNumber,
                 columnNumber: selected.source.columnNumber,
               } : undefined,
+              // Props now has {values, types} structure
               props: selected.props || undefined,
+              dom: clickedElement?.domPath || undefined,
+              // Enhanced context for AI debugging
+              textContent: clickedElement?.textContent || undefined,
+              testId: clickedElement?.testId || undefined,
+              aria: clickedElement?.aria || undefined,
+              form: clickedElement?.form || undefined,
             }
 
             // Add element message
             addMessage('element', elementContent)
+
+            // Auto-copy to clipboard
+            try {
+              const clipboardData = JSON.stringify(elementContent, null, 2)
+              navigator.clipboard.writeText(clipboardData).then(() => {
+                showToast('Element copied to clipboard')
+              }).catch((err) => {
+                console.warn('[Playground] Clipboard write failed:', err)
+              })
+            } catch (err) {
+              console.warn('[Playground] Clipboard copy error:', err)
+            }
 
             // Auto-deactivate selection mode
             setIsSelecting(false)
@@ -161,7 +231,7 @@ export default function PlaygroundPage() {
 
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [addMessage, clearConnectionTimeout])
+  }, [addMessage, clearConnectionTimeout, showToast])
 
   // Handle URL load
   const handleLoadUrl = useCallback((newUrl: string) => {
@@ -276,6 +346,27 @@ export default function PlaygroundPage() {
     setIsDrawerOpen(false)
   }, [])
 
+  // Reopen drawer
+  const handleReopenDrawer = useCallback(() => {
+    setIsDrawerOpen(true)
+  }, [])
+
+  // Copy installation prompt
+  const handleCopyInstallPrompt = useCallback(() => {
+    if (installCopyTimeoutRef.current) {
+      clearTimeout(installCopyTimeoutRef.current)
+    }
+    navigator.clipboard.writeText(INSTALL_PROMPT).then(() => {
+      setInstallPromptCopied(true)
+      showToast('Installation prompt copied')
+      installCopyTimeoutRef.current = setTimeout(() => {
+        setInstallPromptCopied(false)
+      }, 2500)
+    }).catch((err) => {
+      console.warn('[Playground] Failed to copy install prompt:', err)
+    })
+  }, [showToast])
+
   // Set mounted ref and cleanup on unmount
   useEffect(() => {
     isMountedRef.current = true
@@ -283,6 +374,12 @@ export default function PlaygroundPage() {
       isMountedRef.current = false
       clearConnectionTimeout()
       clearDemoTimeouts()
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current)
+      }
+      if (installCopyTimeoutRef.current) {
+        clearTimeout(installCopyTimeoutRef.current)
+      }
     }
   }, [clearConnectionTimeout, clearDemoTimeouts])
 
@@ -290,7 +387,7 @@ export default function PlaygroundPage() {
     <>
       <Header webGpuAvailable={webGpuAvailable} />
 
-      <main className={styles.main}>
+      <main className={`${styles.main} ${isDrawerOpen ? styles.mainWithDrawer : ''}`}>
         <div className={styles.mainContent}>
           <h1 className={`${styles.pageTitle} animate-emerge`}>
             Playground
@@ -304,17 +401,24 @@ export default function PlaygroundPage() {
             isLoading={connectionState === 'loading'}
           />
 
-          {!url && (
-            <div className={`${externalStyles.urlInput} animate-emerge delay-2`}>
+          <div className="animate-emerge delay-2" style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+            {!url && (
               <button
                 className={externalStyles.urlInputButton}
                 onClick={handleTestSampleComponents}
-                style={{ width: '100%' }}
+                style={{ flex: 1 }}
               >
                 Test with Sample Components
               </button>
-            </div>
-          )}
+            )}
+            <button
+              className={`${externalStyles.installPromptButton} ${installPromptCopied ? externalStyles.installPromptButtonCopied : ''}`}
+              onClick={handleCopyInstallPrompt}
+            >
+              <span className={externalStyles.installPromptIcon}>{installPromptCopied ? '✓' : '📋'}</span>
+              {installPromptCopied ? 'Copied!' : 'Copy Install Prompt'}
+            </button>
+          </div>
 
           <div className={externalStyles.externalLayout}>
             <div className={externalStyles.externalMain}>
@@ -326,6 +430,29 @@ export default function PlaygroundPage() {
                 />
                 <ConnectionStatus state={connectionState} />
               </div>
+
+              {connectionState === 'not-installed' && (
+                <div className={externalStyles.notInstalledBanner}>
+                  <span className={externalStyles.notInstalledIcon}>⚠️</span>
+                  <div className={externalStyles.notInstalledContent}>
+                    <div className={externalStyles.notInstalledTitle}>
+                      forge-inspector not detected
+                    </div>
+                    <div className={externalStyles.notInstalledText}>
+                      The loaded project doesn&apos;t appear to have forge-inspector installed.
+                      Copy the installation prompt below and paste it to your AI assistant to set it up.
+                    </div>
+                    <div className={externalStyles.notInstalledActions}>
+                      <button
+                        className={externalStyles.notInstalledCopyButton}
+                        onClick={handleCopyInstallPrompt}
+                      >
+                        {installPromptCopied ? '✓ Copied!' : '📋 Copy Installation Prompt'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -349,6 +476,24 @@ export default function PlaygroundPage() {
       </ChatErrorBoundary>
 
       <RecordingOverlay isRecording={isRecording} />
+
+      {!isDrawerOpen && (
+        <button
+          className={inspectorStyles.reopenConsoleButton}
+          onClick={handleReopenDrawer}
+          aria-label="Open console"
+        >
+          <span className={inspectorStyles.reopenConsoleIcon}>⚡</span>
+          Console
+        </button>
+      )}
+
+      {toastMessage && (
+        <div className={inspectorStyles.toast}>
+          <span className={inspectorStyles.toastIcon}>✓</span>
+          {toastMessage}
+        </div>
+      )}
     </>
   )
 }
