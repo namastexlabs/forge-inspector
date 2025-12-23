@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   transpilePackages: ['forge-inspector'],
   outputFileTracingRoot: path.join(__dirname, '../../'),
+  allowedDevOrigins: ['http://127.0.0.1:*', 'http://localhost:*'],
 }
 
 export default nextConfig

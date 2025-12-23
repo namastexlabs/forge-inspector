@@ -35,23 +35,17 @@
   gap: var(--space-3);
 }
 
-.headerLogoIcon {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, var(--lumen-warm) 0%, var(--lumen-cool) 100%);
-  border-radius: var(--radius-md);
-  color: var(--void-base);
+.headerLogoImage {
+  height: 56px;
+  width: auto;
 }
 
 .headerLogoText {
   font-family: var(--font-display);
-  font-size: var(--text-lg);
-  font-weight: 600;
+  font-size: var(--text-xl);
+  font-weight: 500;
   color: var(--text-primary);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 
 .headerNav {
@@ -96,6 +90,11 @@
 .main {
   min-height: 100vh;
   padding: calc(80px + var(--space-12)) var(--space-6) calc(80px + var(--space-6));
+  transition: padding-right var(--duration-normal) var(--ease-out-expo);
+}
+
+.mainWithDrawer {
+  padding-right: calc(380px + var(--space-6) + var(--space-4));
 }
 
 .mainContent {

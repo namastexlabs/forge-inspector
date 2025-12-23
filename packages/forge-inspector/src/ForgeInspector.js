@@ -12,7 +12,7 @@ import { getDisplayNameForInstance } from './getDisplayNameFromReactInstance.js'
 import { getPathToSource } from './getPathToSource.js'
 import { getPropsForInstance } from './getPropsForInstance.js'
 import { getReactInstancesForElement } from './getReactInstancesForElement.js'
-import { getSourceForInstance } from './getSourceForInstance.js'
+import { getSourceForInstance, getSourceFromElement } from './getSourceForInstance.js'
 import { getUrl } from './getUrl.js'
 
 // Visual agent is dynamically imported to avoid bundling onnxruntime-node
@@ -21,6 +21,9 @@ let visualAgentModule = null
 const getVisualAgent = async () => {
   if (!visualAgentModule) {
     // webpackIgnore tells webpack to skip bundling this import
+    // Note: This path works in dev but may 404 in production builds where
+    // the visual-agent directory isn't copied to the output chunks location.
+    // TODO: Configure Next.js publicRuntimeConfig or copy visual-agent to public/
     visualAgentModule = await import(/* webpackIgnore: true */ './visual-agent/index.js')
   }
   return visualAgentModule
@@ -88,6 +91,57 @@ function getTargetOrigin() {
 }
 
 /**
+ * Generate a CSS-selector-style DOM path from an element up to the root.
+ * Optimized for AI code navigation - includes disambiguating nth-child when needed.
+ * @param {HTMLElement} element
+ * @returns {string}
+ */
+function getDOMPath(element) {
+  if (!element || element === document.body || element === document.documentElement) {
+    return ''
+  }
+
+  const path = []
+  let current = element
+
+  while (current && current !== document.body && current !== document.documentElement) {
+    let selector = current.tagName.toLowerCase()
+
+    // Add ID if present (most specific)
+    if (current.id) {
+      selector += `#${current.id}`
+    } else {
+      // Add first class if present
+      if (current.className && typeof current.className === 'string') {
+        const firstClass = current.className.trim().split(/\s+/)[0]
+        if (firstClass) {
+          selector += `.${firstClass}`
+        }
+      }
+
+      // Add nth-child for disambiguation when no id
+      if (current.parentElement) {
+        const siblings = Array.from(current.parentElement.children)
+        const sameTagSiblings = siblings.filter(s => s.tagName === current.tagName)
+        if (sameTagSiblings.length > 1) {
+          const index = sameTagSiblings.indexOf(current) + 1
+          selector += `:nth-child(${index})`
+        }
+      }
+    }
+
+    path.unshift(selector)
+
+    // Stop at element with ID (sufficient for unique identification)
+    if (current.id) break
+
+    current = current.parentElement
+  }
+
+  return path.join(' > ')
+}
+
+/**
  * Validate if a message event origin is trusted.
  * Primary security check: event.source === window.parent
  * Secondary check: origin validation when referrer is available
@@ -127,6 +181,36 @@ function isValidMessageOrigin(event) {
 }
 
 /**
+ * Get visible text content from an element (what the user sees)
+ * Prefers direct text nodes, falls back to innerText (truncated)
+ * @param {HTMLElement} el
+ * @returns {string | undefined}
+ */
+function getVisibleText(el) {
+  if (!el) return undefined
+
+  // Get direct text content from text nodes (not nested elements)
+  const directText = Array.from(el.childNodes)
+    .filter(node => node.nodeType === Node.TEXT_NODE)
+    .map(node => node.textContent?.trim())
+    .filter(Boolean)
+    .join(' ')
+
+  if (directText) return directText
+
+  // Fallback to innerText if no direct text (truncated for large content)
+  if (el.innerText) {
+    const inner = el.innerText.trim()
+    if (inner.length > 100) {
+      return inner.substring(0, 100) + '...'
+    }
+    return inner || undefined
+  }
+
+  return undefined
+}
+
+/**
  * Extract component instances data for a target element
  * Returns component info even without source location (for production builds)
  * @param {HTMLElement} target
@@ -148,7 +232,11 @@ function getComponentInstances(target, pathModifier) {
 
   return instances.map((instance) => {
     const name = getDisplayNameForInstance(instance)
-    const source = getSourceForInstance(instance)
+    // Try React internals first, fallback to DOM data-forge-source attribute
+    let source = getSourceForInstance(instance)
+    if (!source) {
+      source = getSourceFromElement(target)
+    }
     const path = source ? getPathToSource(source, pathModifier) : null
     const props = getPropsForInstance(instance)
 
@@ -190,6 +278,23 @@ function postOpenToParent({ editor, pathToSource, url, trigger, event, element, 
       ? allComponents.find(comp => comp.name === selectedComponent)
       : allComponents.find(comp => comp.pathToSource === pathToSource) || allComponents[0]
 
+    // Build aria object, filtering out undefined values
+    const ariaAttrs = el ? {
+      label: el.getAttribute('aria-label') || undefined,
+      describedby: el.getAttribute('aria-describedby') || undefined,
+      placeholder: el.getAttribute('placeholder') || undefined,
+      title: el.getAttribute('title') || undefined,
+    } : undefined
+    const hasAria = ariaAttrs && Object.values(ariaAttrs).some(v => v !== undefined)
+
+    // Build form context for form elements
+    const isFormElement = el && ['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)
+    const formAttrs = isFormElement ? {
+      name: el.getAttribute('name') || undefined,
+      type: el.getAttribute('type') || undefined,
+      value: /** @type {HTMLInputElement} */ (el).value?.substring?.(0, 100) || undefined,
+    } : undefined
+
     const elementInfo = el
       ? {
         tag: el.tagName?.toLowerCase?.() || undefined,
@@ -200,6 +305,12 @@ function postOpenToParent({ editor, pathToSource, url, trigger, event, element, 
             : String(el.className || ''),
         role: el.getAttribute('role') || undefined,
         dataset: { ...el.dataset },
+        domPath: getDOMPath(el),
+        // Enhanced context for AI debugging
+        textContent: getVisibleText(el),
+        testId: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || undefined,
+        aria: hasAria ? ariaAttrs : undefined,
+        form: formAttrs,
       }
       : undefined
 
@@ -272,7 +383,10 @@ export function ForgeInspector() {
     (null)
   )
 
-  const [showButton, setShowButton] = React.useState(false)
+  // Show buttons by default in iframe contexts (for standalone forge-inspector usage)
+  // When in playground, isInPlayground will be set to true to hide them
+  const [showButton, setShowButton] = React.useState(true)
+  const [isInPlayground, setIsInPlayground] = React.useState(false)
 
   // Visual agent state
   const [isRecording, setIsRecording] = React.useState(false)
@@ -307,10 +421,10 @@ export function ForgeInspector() {
         aria-pressed=${active}
         style=${{
         position: 'fixed',
-        bottom: '16px',
-        right: '16px',
-        width: '48px',
-        height: '48px',
+        bottom: '12px',
+        right: '12px',
+        width: '36px',
+        height: '36px',
         borderRadius: '50%',
         background: active ? 'royalblue' : 'white',
         color: active ? 'white' : 'black',
@@ -318,11 +432,11 @@ export function ForgeInspector() {
         boxShadow: '0 2px 6px rgba(0,0,0,.3)',
         zIndex: 2147483647,
         cursor: 'pointer',
-        fontSize: '18px',
+        fontSize: '14px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '8px',
+        padding: '6px',
       }}
         title="Select component for AI help"
       >
@@ -330,8 +444,8 @@ export function ForgeInspector() {
           src=${'data:image/svg+xml;utf8,' + encodeURIComponent(fiIcon)}
           alt="FI Icon"
           style=${{
-        width: '32px',
-        height: '32px',
+        width: '24px',
+        height: '24px',
         filter: active ? 'brightness(0) invert(1)' : 'none',
       }}
         />
@@ -351,10 +465,10 @@ export function ForgeInspector() {
         aria-pressed=${recording}
         style=${{
           position: 'fixed',
-          bottom: '16px',
-          right: '72px',
-          width: '48px',
-          height: '48px',
+          bottom: '12px',
+          right: '52px',
+          width: '36px',
+          height: '36px',
           borderRadius: '50%',
           background: recording ? '#dc2626' : disabled ? '#9ca3af' : 'white',
           color: recording ? 'white' : disabled ? '#6b7280' : 'black',
@@ -362,11 +476,11 @@ export function ForgeInspector() {
           boxShadow: '0 2px 6px rgba(0,0,0,.3)',
           zIndex: 2147483647,
           cursor: disabled ? 'not-allowed' : 'pointer',
-          fontSize: '18px',
+          fontSize: '14px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: '8px',
+          padding: '6px',
           opacity: disabled ? 0.6 : 1,
         }}
         title=${disabled ? 'WebGPU required for visual recording' : recording ? 'Stop recording' : 'Start visual recording'}
@@ -375,8 +489,8 @@ export function ForgeInspector() {
           src=${'data:image/svg+xml;utf8,' + encodeURIComponent(recording ? stopIcon : recordIcon)}
           alt=${recording ? 'Stop' : 'Record'}
           style=${{
-            width: '32px',
-            height: '32px',
+            width: '24px',
+            height: '24px',
             filter: recording ? 'brightness(0) invert(1)' : disabled ? 'grayscale(1)' : 'none',
           }}
         />
@@ -749,8 +863,9 @@ export function ForgeInspector() {
         console.log('[ForgeInspector] Received message:', data)
         switch (data.type) {
           case 'enable-button':
-            console.log('[ForgeInspector] Enable button message received! Setting showButton=true')
-            setShowButton(true)
+            console.log('[ForgeInspector] Enable button message received - hiding floating buttons (playground mode)')
+            setShowButton(true)  // Keep for backwards compatibility
+            setIsInPlayground(true)  // Mark as inside playground - hide floating buttons
             break
           case 'start-selection':
             // Parent wants us to enter selection mode
@@ -861,8 +976,8 @@ export function ForgeInspector() {
     </style>
 
     <${FloatingPortal} key="click-to-component-portal">
-      <!-- Record Button - Only when showButton is true (running from forge) -->
-      ${showButton && html`
+      <!-- Record Button - Only when showButton is true AND not in playground -->
+      ${showButton && !isInPlayground && html`
         <${RecordButton}
           key="click-to-component-record-button"
           recording=${isRecording}
@@ -872,8 +987,8 @@ export function ForgeInspector() {
         />
       `}
 
-      <!-- Target Button - Only when showButton is true -->
-      ${showButton && html`
+      <!-- Target Button - Only when showButton is true AND not in playground -->
+      ${showButton && !isInPlayground && html`
         <${TargetButton}
           key="click-to-component-target-button"
           active=${state === State.HOVER && trigger === Trigger.BUTTON}

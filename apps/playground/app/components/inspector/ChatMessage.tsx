@@ -13,8 +13,25 @@ export interface ElementContent {
     lineNumber: number
     columnNumber?: number
   }
-  props?: Record<string, unknown>
+  props?: {
+    values?: Record<string, unknown>
+    types?: Record<string, string>
+  }
   dom?: string
+  // Enhanced context for AI debugging
+  textContent?: string
+  testId?: string
+  aria?: {
+    label?: string
+    describedby?: string
+    placeholder?: string
+    title?: string
+  }
+  form?: {
+    name?: string
+    type?: string
+    value?: string
+  }
 }
 
 // Discriminated union for type-safe message handling
@@ -196,16 +213,22 @@ export function ChatMessage({ message, onCopy, onOpenEditor }: ChatMessageProps)
             <div className={styles.chatMessageElement}>
               <code className={styles.chatMessageTag}>
                 {'<'}{elementContent.componentName || elementContent.tag}
-                {elementContent.props && Object.keys(elementContent.props).length > 0 && (
+                {elementContent.props?.values && Object.keys(elementContent.props.values).length > 0 && (
                   <span className={styles.chatMessageTagProps}>
-                    {' '}{Object.entries(elementContent.props).slice(0, 2).map(([k, v]) =>
+                    {' '}{Object.entries(elementContent.props.values).slice(0, 2).map(([k, v]) =>
                       `${k}="${String(v)}"`
                     ).join(' ')}
-                    {Object.keys(elementContent.props).length > 2 && ' ...'}
+                    {Object.keys(elementContent.props.values).length > 2 && ' ...'}
                   </span>
                 )}
                 {'>'}
               </code>
+              {/* Show text content inline if available */}
+              {elementContent.textContent && (
+                <span className={styles.chatMessageTagText} style={{ marginLeft: '8px', color: 'var(--text-secondary)', fontSize: '0.9em' }}>
+                  "{elementContent.textContent}"
+                </span>
+              )}
             </div>
 
             {/* Expanded details */}
@@ -215,6 +238,51 @@ export function ChatMessage({ message, onCopy, onOpenEditor }: ChatMessageProps)
                   <div className={styles.chatMessageField}>
                     <span className={styles.chatMessageFieldLabel}>Component</span>
                     <span className={styles.chatMessageFieldValue}>{elementContent.componentName}</span>
+                  </div>
+                )}
+
+                {elementContent.dom && (
+                  <div className={styles.chatMessageField}>
+                    <span className={styles.chatMessageFieldLabel}>DOM Path</span>
+                    <code className={styles.chatMessageFieldValue} style={{ fontSize: '0.85em', wordBreak: 'break-all' }}>
+                      {elementContent.dom}
+                    </code>
+                  </div>
+                )}
+
+                {/* Test ID for easy searching */}
+                {elementContent.testId && (
+                  <div className={styles.chatMessageField}>
+                    <span className={styles.chatMessageFieldLabel}>Test ID</span>
+                    <code className={styles.chatMessageFieldValue}>{elementContent.testId}</code>
+                  </div>
+                )}
+
+                {/* Form context for inputs */}
+                {elementContent.form && (
+                  <div className={styles.chatMessageField}>
+                    <span className={styles.chatMessageFieldLabel}>Form</span>
+                    <code className={styles.chatMessageFieldValue}>
+                      {[
+                        elementContent.form.type && `type="${elementContent.form.type}"`,
+                        elementContent.form.name && `name="${elementContent.form.name}"`,
+                        elementContent.form.value && `value="${elementContent.form.value}"`,
+                      ].filter(Boolean).join(' ')}
+                    </code>
+                  </div>
+                )}
+
+                {/* Accessibility context */}
+                {elementContent.aria && (
+                  <div className={styles.chatMessageField}>
+                    <span className={styles.chatMessageFieldLabel}>Aria</span>
+                    <code className={styles.chatMessageFieldValue}>
+                      {[
+                        elementContent.aria.label && `label="${elementContent.aria.label}"`,
+                        elementContent.aria.placeholder && `placeholder="${elementContent.aria.placeholder}"`,
+                        elementContent.aria.title && `title="${elementContent.aria.title}"`,
+                      ].filter(Boolean).join(' ')}
+                    </code>
                   </div>
                 )}
 
@@ -231,12 +299,23 @@ export function ChatMessage({ message, onCopy, onOpenEditor }: ChatMessageProps)
                   </div>
                 )}
 
-                {elementContent.props && Object.keys(elementContent.props).length > 0 && (
+                {/* Prop values (scalars + children text) */}
+                {elementContent.props?.values && Object.keys(elementContent.props.values).length > 0 && (
                   <div className={styles.chatMessageField}>
                     <span className={styles.chatMessageFieldLabel}>Props</span>
                     <pre className={styles.chatMessageCode}>
-                      {formatProps(elementContent.props)}
+                      {formatProps(elementContent.props.values)}
                     </pre>
+                  </div>
+                )}
+
+                {/* Prop types (functions, objects, arrays, elements) */}
+                {elementContent.props?.types && Object.keys(elementContent.props.types).length > 0 && (
+                  <div className={styles.chatMessageField}>
+                    <span className={styles.chatMessageFieldLabel}>Handlers</span>
+                    <code className={styles.chatMessageFieldValue} style={{ fontSize: '0.85em' }}>
+                      {Object.entries(elementContent.props.types).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                    </code>
                   </div>
                 )}
 
