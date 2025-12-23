@@ -8,7 +8,7 @@
     "dev": "turbo run dev --filter=forge-inspector-playground",
     "start": "pnpm --filter forge-inspector-playground start",
     "lint": "turbo run lint --filter=forge-inspector",
-    "release": "pnpm -r publish --access public"
+    "release": "pnpm build && pnpm -r publish --access public"
   },
   "devDependencies": {
     "eslint": "8.57.1",
