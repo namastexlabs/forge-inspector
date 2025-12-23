@@ -1,21 +1,27 @@
 /**
  * VisualAgentOrchestrator - Manages the visual agent loop
  *
- * Uses Vercel AI SDK streamText with FastVLM provider and tools.
- * Handles context pruning and report generation.
+ * Uses vlm.worker.js for local vision models (Florence-2, etc.)
+ * and AI SDK with @ai-sdk/google for cloud models (Gemini).
+ * Handles context pruning, step tracking, and report generation.
  */
 
-import { streamText, generateText } from 'ai'
-import { createFastVLMProvider } from './FastVLMProvider.js'
+// CDN imports for cloud models only
+import { streamText, generateText } from 'https://cdn.jsdelivr.net/npm/ai@6/+esm'
+import { createGoogleGenerativeAI } from 'https://cdn.jsdelivr.net/npm/@ai-sdk/google@3/+esm'
 import { createConfirmStepTool } from './tools/confirmStep.js'
 import ScreenCaptureService from './ScreenCaptureService.js'
+
+/** localStorage key for Gemini API key */
+const GEMINI_KEY_STORAGE = 'forge-inspector-gemini-key'
 
 /**
  * @typedef {Object} Observation
  * @property {string} text - The observation text
  * @property {number} timestamp - When the observation was made
- * @property {string} [trigger] - What triggered this observation
+ * @property {string|Object} [trigger] - What triggered this observation
  * @property {boolean} [confirmed] - Whether user confirmed this observation
+ * @property {number} stepNumber - The step number
  */
 
 /**
@@ -24,30 +30,35 @@ import ScreenCaptureService from './ScreenCaptureService.js'
  * @property {(report: string) => void} [onComplete] - Callback when session completes
  * @property {(error: Error) => void} [onError] - Callback for errors
  * @property {(status: string) => void} [onStatusChange] - Callback for status changes
+ * @property {(data: {modelId: string, progress: number, status: string}) => void} [onLoadingProgress] - Callback during model loading
  * @property {number} [maxContextTurns=5] - Max conversation turns to keep
  * @property {string} [systemPrompt] - Override default system prompt
+ * @property {Object} [modelConfig] - Model configuration
  */
 
-const DEFAULT_SYSTEM_PROMPT = `You are a visual QA agent observing a user's screen to help reproduce bugs.
+const DEFAULT_SYSTEM_PROMPT = `You are a QA engineer recording bug reproduction steps.
 
-Your task is to:
-1. Carefully observe the current screen state
-2. Describe what you see - UI elements, their states, any error messages
-3. Identify the specific action the user just performed
-4. Ask for confirmation using the confirmStep tool before proceeding
+OUTPUT FORMAT:
+STEP [N]: [Action] → [Result/State Change]
 
-Be precise and factual. Focus on:
-- Button/link text and states (enabled, disabled, loading)
-- Form field values and validation messages
-- Error messages, toasts, or alerts
-- Navigation changes
-- Visual anomalies that might indicate bugs
+RULES:
+1. Number steps sequentially
+2. Describe the USER ACTION from context
+3. Describe what CHANGED on screen
+4. Note errors, validation messages, unexpected behavior
+5. Use actual button text, field names, error messages
 
-Keep observations concise but complete.`
+EXAMPLE:
+STEP 1: Page loaded → Login form with Email and Password fields
+STEP 2: Clicked "Sign In" → Error: "Email is required"
+STEP 3: Entered email → Field populated, error cleared`
 
 export class VisualAgentOrchestrator {
-  /** @type {ReturnType<typeof createFastVLMProvider>} */
-  #provider
+  /** @type {any} */
+  #cloudModel = null
+
+  /** @type {Worker | null} */
+  #worker = null
 
   /** @type {ScreenCaptureService} */
   #capture
@@ -67,8 +78,20 @@ export class VisualAgentOrchestrator {
   /** @type {boolean} */
   #isActive = false
 
+  /** @type {boolean} */
+  #modelReady = false
+
+  /** @type {number} */
+  #stepCount = 0
+
   /** @type {OrchestratorOptions} */
   #options
+
+  /** @type {Object} */
+  #modelConfig
+
+  /** @type {Map<string, { resolve: Function, reject: Function, text: string }>} */
+  #pendingInferences = new Map()
 
   /**
    * @param {OrchestratorOptions} options
@@ -80,14 +103,190 @@ export class VisualAgentOrchestrator {
       ...options
     }
 
-    this.#provider = createFastVLMProvider()
+    // Default to SmolVLM 256M if no model config provided
+    this.#modelConfig = options.modelConfig || {
+      id: 'smolvlm-256m',
+      name: 'SmolVLM 256M',
+      type: 'local',
+      modelId: 'HuggingFaceTB/SmolVLM-256M-Instruct',
+      dtype: 'q4',
+      device: 'webgpu'
+    }
+
     this.#capture = new ScreenCaptureService()
     this.#confirmTool = createConfirmStepTool({
       onConfirmRequest: (observation, question, severity) => {
-        // Could trigger local UI here if needed
         console.log('[VisualAgent] Confirmation request:', { observation, question, severity })
       }
     })
+  }
+
+  /**
+   * Create worker for local models
+   * @returns {Promise<Worker>}
+   */
+  async #createWorker() {
+    return new Promise((resolve, reject) => {
+      // Get the base path for the worker
+      const scriptUrl = import.meta.url
+      const basePath = scriptUrl.substring(0, scriptUrl.lastIndexOf('/'))
+      const workerUrl = `${basePath}/vlm.worker.js`
+
+      console.log('[VisualAgent] Creating worker from:', workerUrl)
+      const worker = new Worker(workerUrl, { type: 'module' })
+
+      const onMessage = (event) => {
+        const { type, data } = event.data
+
+        switch (type) {
+          case 'worker-ready':
+            console.log('[VisualAgent] Worker ready')
+            worker.removeEventListener('message', onMessage)
+            resolve(worker)
+            break
+
+          case 'error':
+            console.error('[VisualAgent] Worker error:', data)
+            worker.removeEventListener('message', onMessage)
+            reject(new Error(data))
+            break
+        }
+      }
+
+      worker.addEventListener('message', onMessage)
+      worker.addEventListener('error', (err) => {
+        console.error('[VisualAgent] Worker load error:', err)
+        reject(err)
+      })
+    })
+  }
+
+  /**
+   * Initialize local model via worker
+   */
+  async #initLocalModel() {
+    const config = this.#modelConfig
+
+    // Create worker
+    this.#worker = await this.#createWorker()
+
+    // Set up message handler for model loading
+    return new Promise((resolve, reject) => {
+      const onMessage = (event) => {
+        const { type, data, requestId } = event.data
+
+        switch (type) {
+          case 'loading':
+            console.log('[VisualAgent] Loading progress:', data)
+            if (this.#options.onLoadingProgress) {
+              this.#options.onLoadingProgress({
+                modelId: data.modelId || config.modelId,
+                progress: data.progress || 0,
+                status: data.status || 'Loading...'
+              })
+            }
+            break
+
+          case 'ready':
+            console.log('[VisualAgent] Model ready:', data)
+            this.#worker.removeEventListener('message', onMessage)
+            // Set up permanent message handler
+            this.#setupWorkerHandler()
+            resolve()
+            break
+
+          case 'error':
+            console.error('[VisualAgent] Model init error:', data)
+            this.#worker.removeEventListener('message', onMessage)
+            reject(new Error(data))
+            break
+
+          case 'log':
+            console.log('[VisualAgent Worker]', data)
+            break
+        }
+      }
+
+      this.#worker.addEventListener('message', onMessage)
+
+      // Send init message
+      console.log('[VisualAgent] Sending init message:', {
+        modelId: config.modelId,
+        modelClass: config.modelClass,
+        dtype: config.dtype,
+        device: config.device
+      })
+
+      this.#worker.postMessage({
+        type: 'init',
+        modelId: config.modelId,
+        modelClass: config.modelClass || 'AutoModelForVision2Seq',
+        dtype: config.dtype || 'q4',
+        device: config.device || 'webgpu'
+      })
+    })
+  }
+
+  /**
+   * Set up permanent worker message handler for inference
+   */
+  #setupWorkerHandler() {
+    this.#worker.addEventListener('message', (event) => {
+      const { type, requestId, data } = event.data
+
+      const pending = requestId ? this.#pendingInferences.get(requestId) : null
+
+      switch (type) {
+        case 'stream-start':
+          console.log('[VisualAgent] Inference started:', requestId)
+          break
+
+        case 'token':
+          if (pending) {
+            pending.text += data
+            if (this.#options.onObservation) {
+              this.#options.onObservation(data)
+            }
+          }
+          break
+
+        case 'stream-end':
+          if (pending) {
+            console.log('[VisualAgent] Inference complete:', requestId, 'tokens:', data?.tokenCount)
+            this.#pendingInferences.delete(requestId)
+            pending.resolve(pending.text)
+          }
+          break
+
+        case 'error':
+          console.error('[VisualAgent] Inference error:', data)
+          if (pending) {
+            this.#pendingInferences.delete(requestId)
+            pending.reject(new Error(data))
+          }
+          break
+
+        case 'aborted':
+          if (pending) {
+            this.#pendingInferences.delete(requestId)
+            pending.resolve(pending.text) // Return partial text
+          }
+          break
+      }
+    })
+  }
+
+  /**
+   * Create cloud model (Gemini)
+   * @returns {any}
+   */
+  #createCloudModel() {
+    const apiKey = localStorage.getItem(GEMINI_KEY_STORAGE)
+    if (!apiKey) {
+      throw new Error('Gemini API key not found. Please set it in the model selection modal.')
+    }
+    const google = createGoogleGenerativeAI({ apiKey })
+    return google(this.#modelConfig.providerId || 'gemini-2.0-flash')
   }
 
   /**
@@ -95,9 +294,23 @@ export class VisualAgentOrchestrator {
    */
   async initialize() {
     this.#setStatus('initializing')
-    // @ts-ignore - Custom extension on provider
-    await this.#provider.initialize()
+
+    if (this.#modelConfig.type === 'cloud') {
+      this.#cloudModel = this.#createCloudModel()
+    } else {
+      await this.#initLocalModel()
+    }
+
+    this.#modelReady = true
     this.#setStatus('ready')
+  }
+
+  /**
+   * Check if model is ready
+   * @returns {boolean}
+   */
+  isReady() {
+    return this.#modelReady
   }
 
   /**
@@ -138,8 +351,7 @@ export class VisualAgentOrchestrator {
     }
 
     // Ensure model is loaded
-    // @ts-ignore - Custom extension on provider
-    if (!this.#provider.isReady()) {
+    if (!this.#modelReady) {
       await this.initialize()
     }
 
@@ -147,17 +359,97 @@ export class VisualAgentOrchestrator {
     this.#observations = []
     this.#sessionStart = Date.now()
     this.#isActive = true
+    this.#stepCount = 0
 
-    // Add system message
+    // Add system message with defensive fallback
+    const systemPrompt = this.#options.systemPrompt || DEFAULT_SYSTEM_PROMPT
+    if (!systemPrompt || typeof systemPrompt !== 'string') {
+      throw new Error('[VisualAgent] System prompt must be a non-empty string')
+    }
+
+    console.log('[VisualAgent] Adding system message, prompt length:', systemPrompt.length)
     this.#messages.push({
       role: 'system',
-      content: this.#options.systemPrompt
+      content: systemPrompt
     })
   }
 
   /**
+   * Run inference with local worker
+   * @param {Uint8Array} imageData
+   * @param {string} prompt
+   * @returns {Promise<string>}
+   */
+  async #runLocalInference(imageData, prompt) {
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+
+    return new Promise((resolve, reject) => {
+      this.#pendingInferences.set(requestId, { resolve, reject, text: '' })
+
+      this.#worker.postMessage({
+        type: 'inference',
+        requestId,
+        imageData,
+        prompt,
+        maxTokens: 256
+      })
+    })
+  }
+
+  /**
+   * Run inference with cloud model (Gemini)
+   * @param {Uint8Array} imageData
+   * @param {string} prompt
+   * @returns {Promise<string>}
+   */
+  async #runCloudInference(imageData, prompt) {
+    const contextMessages = this.#getContextMessages()
+
+    // Add the new user message with image
+    const userMessage = {
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          image: imageData
+        },
+        {
+          type: 'text',
+          text: prompt
+        }
+      ]
+    }
+
+    let observationText = ''
+
+    const result = await streamText({
+      model: this.#cloudModel,
+      messages: [...contextMessages, userMessage],
+      tools: {
+        confirmStep: this.#confirmTool
+      },
+      maxSteps: 3,
+      onStepFinish: async ({ text }) => {
+        if (text) {
+          observationText += text
+        }
+      }
+    })
+
+    // Consume the stream
+    for await (const chunk of result.textStream) {
+      observationText += chunk
+      if (this.#options.onObservation) {
+        this.#options.onObservation(chunk)
+      }
+    }
+
+    return observationText
+  }
+
+  /**
    * Trigger analysis of current screen
-   * @param {string} [triggerContext] - Optional context about what triggered this
+   * @param {string|Object} [triggerContext] - Optional context about what triggered this
    * @returns {Promise<string>} The observation text
    */
   async trigger(triggerContext = '') {
@@ -166,80 +458,54 @@ export class VisualAgentOrchestrator {
     }
 
     this.#setStatus('processing')
+    this.#stepCount++
 
     try {
       // Capture current frame
       const frame = await this.#capture.captureFrame()
 
-      // Build user message with image
-      /** @type {Array<{type: string, image?: Uint8Array, text?: string}>} */
-      const userContent = [
-        {
-          type: 'image',
-          image: frame.data
-        }
-      ]
-
-      if (triggerContext) {
-        userContent.push({
-          type: 'text',
-          text: `User action: ${triggerContext}\n\nDescribe what you observe and confirm with the user.`
-        })
-      } else {
-        userContent.push({
-          type: 'text',
-          text: 'Describe the current screen state and any notable elements.'
-        })
+      // Format trigger context
+      let contextText = ''
+      if (typeof triggerContext === 'object' && triggerContext !== null) {
+        // Rich element context
+        const ctx = triggerContext
+        contextText = `Action: ${ctx.action || 'interaction'}
+Element: ${ctx.element?.tag || 'unknown'}${ctx.element?.text ? ` with text "${ctx.element.text}"` : ''}${ctx.element?.id ? ` (id: ${ctx.element.id})` : ''}
+${ctx.component ? `Component: ${ctx.component}` : ''}`
+      } else if (triggerContext) {
+        contextText = triggerContext
       }
 
-      // Add to context (with pruning)
+      // Build prompt
+      let prompt
+      if (contextText) {
+        prompt = `STEP ${this.#stepCount} context:\n${contextText}\n\nDescribe what you observe for this step.`
+      } else {
+        prompt = `STEP ${this.#stepCount}: Describe the current screen state.`
+      }
+
+      // Run inference based on model type
+      let observationText
+      if (this.#modelConfig.type === 'cloud') {
+        observationText = await this.#runCloudInference(frame.data, prompt)
+      } else {
+        observationText = await this.#runLocalInference(frame.data, prompt)
+      }
+
+      // Build user message for context
+      const userContent = [
+        { type: 'image', image: frame.data },
+        { type: 'text', text: prompt }
+      ]
       this.#addMessage({ role: 'user', content: userContent })
 
-      // Run inference with streaming
-      let observationText = ''
-
-      const result = await streamText({
-        model: this.#provider,
-        messages: this.#getContextMessages(),
-        tools: {
-          confirmStep: this.#confirmTool
-        },
-        maxSteps: 3, // Allow tool calls
-        onStepFinish: async ({ text, toolCalls, toolResults }) => {
-          if (text) {
-            observationText += text
-          }
-
-          // Handle tool results
-          if (toolResults) {
-            for (const result of toolResults) {
-              // @ts-ignore - toolResults type is complex
-              if (result.toolName === 'confirmStep') {
-                const observation = this.#observations[this.#observations.length - 1]
-                if (observation) {
-                  // @ts-ignore - toolResults type is complex
-                  observation.confirmed = result.result?.confirmed
-                }
-              }
-            }
-          }
-        }
-      })
-
-      // Consume the stream
-      for await (const chunk of result.textStream) {
-        observationText += chunk
-        if (this.#options.onObservation) {
-          this.#options.onObservation(chunk)
-        }
-      }
-
-      // Record observation
+      // Record observation with step number
       const observation = {
         text: observationText,
         timestamp: Date.now(),
         trigger: triggerContext,
-        confirmed: false
+        confirmed: false,
+        stepNumber: this.#stepCount
       }
       this.#observations.push(observation)
 
@@ -268,58 +534,24 @@ export class VisualAgentOrchestrator {
 
     const sessionDuration = Date.now() - this.#sessionStart
 
-    // Build report prompt
-    const reportPrompt = `Based on the observations during this session, generate a structured QA bug report.
-
-Session duration: ${Math.round(sessionDuration / 1000)}s
-Number of observations: ${this.#observations.length}
-
-Observations:
-${this.#observations.map((o, i) => `${i + 1}. [${o.confirmed ? 'CONFIRMED' : 'UNCONFIRMED'}] ${o.trigger ? `(${o.trigger}) ` : ''}${o.text}`).join('\n\n')}
-
-Generate a concise bug reproduction report with:
-1. Summary of the issue
-2. Steps to reproduce
-3. Expected vs actual behavior
-4. Any relevant error messages observed`
-
-    try {
-      const result = await generateText({
-        model: this.#provider,
-        messages: [
-          { role: 'system', content: 'You are a QA engineer writing bug reports.' },
-          { role: 'user', content: reportPrompt }
-        ]
-      })
-
-      const report = result.text
-
-      if (this.#options.onComplete) {
-        this.#options.onComplete(report)
-      }
-
-      return report
-    } catch (err) {
-      // If model fails, return raw observations
-      const fallbackReport = `# Session Report
+    // Build report from observations
+    const report = `# Session Report
 
 **Duration:** ${Math.round(sessionDuration / 1000)}s
-**Observations:** ${this.#observations.length}
+**Total Steps:** ${this.#stepCount}
 
-## Recorded Observations
+## Recorded Steps
 
-${this.#observations.map((o, i) => `### ${i + 1}. ${o.trigger || 'Observation'}
+${this.#observations.map((o) => `### STEP ${o.stepNumber}${typeof o.trigger === 'object' ? `: ${o.trigger.action || 'Action'}` : (o.trigger ? `: ${o.trigger}` : '')}
 - **Timestamp:** ${new Date(o.timestamp).toISOString()}
-- **Confirmed:** ${o.confirmed ? 'Yes' : 'No'}
 - **Details:** ${o.text}
 `).join('\n')}`
 
-      if (this.#options.onComplete) {
-        this.#options.onComplete(fallbackReport)
-      }
-
-      return fallbackReport
+    if (this.#options.onComplete) {
+      this.#options.onComplete(report)
     }
+
+    return report
   }
 
   /**
@@ -341,11 +573,20 @@ ${this.#observations.map((o, i) => `### ${i + 1}. ${o.trigger || 'Observation'}
    */
   terminate() {
     this.#capture.stop()
-    // @ts-ignore - Custom extension on provider
-    this.#provider.terminate()
+
+    // Terminate worker if exists
+    if (this.#worker) {
+      this.#worker.postMessage({ type: 'terminate' })
+      this.#worker = null
+    }
+
+    this.#cloudModel = null
+    this.#modelReady = false
     this.#isActive = false
     this.#messages = []
     this.#observations = []
+    this.#stepCount = 0
+    this.#pendingInferences.clear()
   }
 
   /**
@@ -431,6 +672,20 @@ ${this.#observations.map((o, i) => `### ${i + 1}. ${o.trigger || 'Observation'}
    */
   get capture() {
     return this.#capture
+  }
+
+  /**
+   * Get current step count
+   */
+  get stepCount() {
+    return this.#stepCount
+  }
+
+  /**
+   * Get current model config
+   */
+  get modelConfig() {
+    return this.#modelConfig
   }
 }
 

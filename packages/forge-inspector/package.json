@@ -60,9 +60,11 @@
     "react": ">=16.8.0"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.0",
+    "@built-in-ai/transformers-js": "^0.3.4",
     "@floating-ui/react": "^0.26.0",
     "@huggingface/transformers": "^3.5.1",
-    "ai": "^4.3.16",
+    "ai": "^6.0.2",
     "htm": "^3.1.0",
     "zod": "^3.24.4"
   },

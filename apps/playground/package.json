@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "pnpm run copy-visual-agent && next dev",
+    "copy-visual-agent": "rm -rf public/visual-agent && cp -r ../../packages/forge-inspector/src/visual-agent public/visual-agent",
+    "prebuild": "pnpm run copy-visual-agent",
     "build": "next build",
     "postbuild": "rm -rf ../../packages/forge-inspector/playground && cp -r out ../../packages/forge-inspector/playground",
     "start": "next start -p 3333",

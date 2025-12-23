@@ -7,7 +7,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const nextConfig: NextConfig = {
   output: 'export',
   reactStrictMode: true,
-  transpilePackages: ['forge-inspector'],
   outputFileTracingRoot: path.join(__dirname, '../../'),
   allowedDevOrigins: ['http://127.0.0.1:*', 'http://localhost:*'],
 }

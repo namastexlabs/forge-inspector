@@ -5,8 +5,10 @@
  * The tool posts a message to the parent window and waits for a response.
  */
 
-import { z } from 'zod'
-import { tool } from 'ai'
+// CDN imports - this file runs directly in browser via /visual-agent/
+// Using jsdelivr instead of esm.sh to avoid onnxruntime-web bundling issues
+import { z } from 'https://cdn.jsdelivr.net/npm/zod@3/+esm'
+import { tool } from 'https://cdn.jsdelivr.net/npm/ai@4/+esm'
 
 // Message protocol constants
 const MESSAGE_SOURCE = 'click-to-component'
