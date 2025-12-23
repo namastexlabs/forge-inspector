@@ -35,7 +35,9 @@ export function UrlInput({ onLoad, isLoading = false }: UrlInputProps) {
     // Normalize URL
     let normalizedUrl = url.trim()
     if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
-      normalizedUrl = `https://${normalizedUrl}`
+      // Use http for localhost/127.0.0.1, https for everything else
+      const isLocal = normalizedUrl.startsWith('localhost') || normalizedUrl.startsWith('127.0.0.1')
+      normalizedUrl = `${isLocal ? 'http' : 'https'}://${normalizedUrl}`
     }
 
     // Update history
