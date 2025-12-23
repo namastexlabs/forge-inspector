@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postbuild": "rm -rf ../../packages/forge-inspector/playground && cp -r out ../../packages/forge-inspector/playground",
     "start": "next start -p 3333",
     "lint": "next lint"
   },
