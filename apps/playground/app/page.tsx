@@ -256,6 +256,12 @@ export default function PlaygroundPage() {
 
   // Handle iframe load
   const handleIframeLoad = useCallback(() => {
+    // Skip if already connected (iframe may fire onLoad on internal navigation)
+    if (connectionState === 'connected') {
+      console.log('[Playground] Iframe loaded (internal navigation), already connected')
+      return
+    }
+
     console.log('[Playground] Iframe loaded, waiting for ready message')
     setConnectionState('waiting')
 
@@ -264,7 +270,7 @@ export default function PlaygroundPage() {
       setConnectionState('not-installed')
       addMessage('system', 'ForgeInspector not detected. Make sure forge-inspector is installed in the target app.')
     }, CONNECTION_TIMEOUT)
-  }, [addMessage])
+  }, [addMessage, connectionState])
 
   // Send message to iframe
   const sendToIframe = useCallback((type: string, payload?: unknown) => {
