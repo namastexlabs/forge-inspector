@@ -19,3 +19,7 @@ See the [forge-inspector package README](./packages/forge-inspector/README.md) f
 
 MIT License - See [LICENSE](./LICENSE) for details.
 
+## Acknowledgements
+
+This project was inspired by [click-to-component](https://github.com/ericclemmons/click-to-component) by Eric Clemmons.
+
