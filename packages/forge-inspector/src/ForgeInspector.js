@@ -638,10 +638,8 @@ export function ForgeInspector() {
   // Toggle recording - use refs to avoid stale closure issues
   const toggleRecording = React.useCallback(async () => {
     console.log('[ForgeInspector] toggleRecording called, hasWebGPU:', hasWebGPURef.current, 'isRecording:', isRecordingRef.current)
-    if (!hasWebGPURef.current) {
-      console.warn('[ForgeInspector] toggleRecording early return - no WebGPU')
-      return
-    }
+    // Note: Don't block on WebGPU here - cloud models (Gemini) don't need it
+    // The model selector will show which models are available based on WebGPU status
 
     if (isRecordingRef.current) {
       // Stop recording
@@ -1195,12 +1193,13 @@ export function ForgeInspector() {
 
     <${FloatingPortal} key="click-to-component-portal">
       <!-- Record Button - Only when showButton is true AND not in playground -->
+      <!-- Always enabled: cloud models (Gemini) work without WebGPU -->
       ${showButton && !isInPlayground && html`
         <${RecordButton}
           key="click-to-component-record-button"
           recording=${isRecording}
           status=${recordingStatus}
-          disabled=${!hasWebGPU}
+          disabled=${false}
           onToggle=${toggleRecording}
         />
       `}
