@@ -15,16 +15,49 @@ import { getReactInstancesForElement } from './getReactInstancesForElement.js'
 import { getSourceForInstance, getSourceFromElement } from './getSourceForInstance.js'
 import { getUrl } from './getUrl.js'
 
-// Visual agent is dynamically imported to avoid bundling onnxruntime-node
-// These will be loaded on-demand when recording features are used
+// Visual agent imports - split between lightweight capability check and full agent
+// Using webpackIgnore because transformers.js can't be processed by Babel
+// The visual-agent is served from /visual-agent/ with CDN deps
+
+// Debug: Catch "illegal path" errors to find source
+if (typeof window !== 'undefined' && !window.__illegalPathDebugger) {
+  window.__illegalPathDebugger = true
+  window.addEventListener('error', (event) => {
+    if (event.message && event.message.includes('illegal path')) {
+      console.error('[DEBUG] Illegal path error caught:', event.message)
+      console.error('[DEBUG] Source:', event.filename, 'line:', event.lineno)
+      console.error('[DEBUG] Stack:', event.error?.stack)
+    }
+  })
+  window.addEventListener('unhandledrejection', (event) => {
+    if (event.reason?.message?.includes('illegal path')) {
+      console.error('[DEBUG] Illegal path rejection:', event.reason)
+      console.error('[DEBUG] Stack:', event.reason?.stack)
+    }
+  })
+}
+
+// Lightweight capability check - doesn't load AI SDK or transformers.js
+let capabilitiesModule = null
+const getCapabilities = async () => {
+  if (!capabilitiesModule) {
+    capabilitiesModule = await import(/* webpackIgnore: true */ '/visual-agent/capabilities.js')
+  }
+  return capabilitiesModule.checkCapabilities()
+}
+
+// Full visual agent - lazy-loaded only when recording starts
 let visualAgentModule = null
 const getVisualAgent = async () => {
   if (!visualAgentModule) {
-    // webpackIgnore tells webpack to skip bundling this import
-    // Note: This path works in dev but may 404 in production builds where
-    // the visual-agent directory isn't copied to the output chunks location.
-    // TODO: Configure Next.js publicRuntimeConfig or copy visual-agent to public/
-    visualAgentModule = await import(/* webpackIgnore: true */ './visual-agent/index.js')
+    console.log('[ForgeInspector] Importing /visual-agent/index.js...')
+    try {
+      visualAgentModule = await import(/* webpackIgnore: true */ '/visual-agent/index.js')
+      console.log('[ForgeInspector] Import successful:', Object.keys(visualAgentModule))
+    } catch (err) {
+      console.error('[ForgeInspector] Import failed:', err)
+      throw err
+    }
   }
   return visualAgentModule
 }
@@ -392,16 +425,40 @@ export function ForgeInspector() {
   const [isRecording, setIsRecording] = React.useState(false)
   const [recordingStatus, setRecordingStatus] = React.useState('idle')
   const [hasWebGPU, setHasWebGPU] = React.useState(false)
+  const [capabilitiesChecked, setCapabilitiesChecked] = React.useState(false)
   const visualAgentRef = React.useRef(null)
 
-  // Check capabilities on mount (dynamic import)
+  // Model selection modal state
+  const [showModelModal, setShowModelModal] = React.useState(false)
+  const [selectedModelId, setSelectedModelId] = React.useState('smolvlm-256m')
+  const [modelLoading, setModelLoading] = React.useState(null) // { modelId, progress, status }
+  const [geminiApiKey, setGeminiApiKey] = React.useState('')
+
+  // Load saved Gemini API key on mount
   React.useEffect(() => {
-    getVisualAgent().then(({ checkCapabilities }) => {
-      const caps = checkCapabilities()
+    const savedKey = localStorage.getItem('forge-inspector-gemini-key')
+    if (savedKey) setGeminiApiKey(savedKey)
+  }, [])
+
+  // Refs to avoid stale closures in message handlers
+  const isRecordingRef = React.useRef(isRecording)
+  const hasWebGPURef = React.useRef(hasWebGPU)
+  React.useEffect(() => { isRecordingRef.current = isRecording }, [isRecording])
+  React.useEffect(() => { hasWebGPURef.current = hasWebGPU }, [hasWebGPU])
+
+  // Check capabilities on mount (lightweight import - no AI SDK)
+  React.useEffect(() => {
+    console.log('[ForgeInspector] Checking visual agent capabilities...')
+    getCapabilities().then((caps) => {
+      console.log('[ForgeInspector] Visual agent capabilities:', JSON.stringify(caps))
+      console.log('[ForgeInspector] WebGPU available:', caps.webgpu)
       setHasWebGPU(caps.webgpu)
-    }).catch(() => {
+      setCapabilitiesChecked(true)
+    }).catch((err) => {
       // Visual agent not available, WebGPU features disabled
+      console.error('[ForgeInspector] Capability check failed:', err)
       setHasWebGPU(false)
+      setCapabilitiesChecked(true)
     })
   }, [])
 
@@ -541,11 +598,50 @@ export function ForgeInspector() {
     }
   }, [])
 
-  // Toggle recording
-  const toggleRecording = React.useCallback(async () => {
-    if (!hasWebGPU) return
+  // Available models for selection
+  // SmolVLM works with AutoModelForVision2Seq in transformers.js
+  const AVAILABLE_MODELS = [
+    {
+      id: 'smolvlm-256m',
+      name: 'SmolVLM 256M',
+      type: 'local',
+      modelId: 'HuggingFaceTB/SmolVLM-256M-Instruct',
+      dtype: 'q4',
+      device: 'webgpu',
+      description: 'Compact vision-language model. Fast inference.',
+      size: '~150MB'
+    },
+    {
+      id: 'smolvlm-500m',
+      name: 'SmolVLM 500M',
+      type: 'local',
+      modelId: 'HuggingFaceTB/SmolVLM-500M-Instruct',
+      dtype: 'q4',
+      device: 'webgpu',
+      description: 'Larger SmolVLM. Better accuracy.',
+      size: '~300MB'
+    },
+    {
+      id: 'gemini-flash',
+      name: 'Gemini 2.0 Flash',
+      type: 'cloud',
+      providerId: 'gemini-2.0-flash',
+      description: "Google's SOTA vision model. Requires API key.",
+      size: 'Cloud',
+      requiresApiKey: true
+    }
+  ]
 
-    if (isRecording) {
+  // Get selected model config
+  const getSelectedModel = () => AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0]
+
+  // Toggle recording - use refs to avoid stale closure issues
+  const toggleRecording = React.useCallback(async () => {
+    console.log('[ForgeInspector] toggleRecording called, hasWebGPU:', hasWebGPURef.current, 'isRecording:', isRecordingRef.current)
+    // Note: Don't block on WebGPU here - cloud models (Gemini) don't need it
+    // The model selector will show which models are available based on WebGPU status
+
+    if (isRecordingRef.current) {
       // Stop recording
       setRecordingStatus('processing')
       setState(State.PROCESSING)
@@ -570,45 +666,99 @@ export function ForgeInspector() {
       setRecordingStatus('idle')
       setState(State.IDLE)
     } else {
-      // Start recording
-      setRecordingStatus('initializing')
-
-      try {
-        const { eyes } = await getVisualAgent()
-        const agent = eyes({
-          onObservation: (text) => {
-            postVisualMessage('recording-observation', {
-              observation: text,
-              timestamp: Date.now()
-            })
-          },
-          onStatusChange: (status) => {
-            setRecordingStatus(status)
-            if (status === 'recording') {
-              setState(State.RECORDING)
-            } else if (status === 'processing') {
-              setState(State.PROCESSING)
-            }
-          },
-          onError: (err) => {
-            console.error('[ForgeInspector] Visual agent error:', err)
-            postVisualMessage('recording-error', { error: err.message })
-          }
-        })
-
-        await agent.start()
-        visualAgentRef.current = agent
-        setIsRecording(true)
-
-        postVisualMessage('recording-started', { timestamp: Date.now() })
-      } catch (err) {
-        console.error('[ForgeInspector] Error starting recording:', err)
-        postVisualMessage('recording-error', { error: err.message })
-        setRecordingStatus('idle')
-        setState(State.IDLE)
-      }
+      // Show model selection modal instead of starting directly
+      setShowModelModal(true)
     }
-  }, [hasWebGPU, isRecording, postVisualMessage])
+  }, [postVisualMessage]) // Using refs for hasWebGPU and isRecording to avoid stale closures
+
+  // Start recording with selected model
+  // When called from parent (playground mode), modelConfig and apiKey come from params
+  // When called from local modal (standalone mode), uses local state
+  const startRecordingWithModel = React.useCallback(async (parentModelConfig, parentApiKey) => {
+    // Use parent-provided config or fall back to local selection
+    const modelConfig = parentModelConfig || getSelectedModel()
+    const apiKey = parentApiKey || geminiApiKey
+
+    // Validate API key for cloud models
+    if (modelConfig.requiresApiKey && !apiKey) {
+      if (!parentModelConfig) {
+        // Only show alert if running in standalone mode (not from playground)
+        alert('Please enter your Gemini API key')
+      }
+      return
+    }
+
+    // Save API key to localStorage if provided
+    if (modelConfig.requiresApiKey && apiKey) {
+      localStorage.setItem('forge-inspector-gemini-key', apiKey)
+    }
+
+    setShowModelModal(false)
+    setRecordingStatus('initializing')
+
+    // Notify parent immediately that we're initializing (before model loads)
+    postVisualMessage('recording-initializing', {
+      message: `Loading ${modelConfig.name}...`,
+      modelId: modelConfig.id,
+      timestamp: Date.now()
+    })
+
+    try {
+      console.log('[ForgeInspector] Loading visual agent module...')
+      const { eyes } = await getVisualAgent()
+      console.log('[ForgeInspector] Visual agent module loaded, creating agent with model:', modelConfig.id)
+
+      const agent = eyes({
+        modelConfig,
+        onObservation: (text) => {
+          postVisualMessage('recording-observation', {
+            observation: text,
+            timestamp: Date.now()
+          })
+        },
+        onStatusChange: (status) => {
+          setRecordingStatus(status)
+          if (status === 'recording') {
+            setState(State.RECORDING)
+          } else if (status === 'processing') {
+            setState(State.PROCESSING)
+          }
+        },
+        onLoadingProgress: (data) => {
+          setModelLoading(data)
+          postVisualMessage('model-loading', data)
+        },
+        onError: (err) => {
+          console.error('[ForgeInspector] Visual agent error:', err)
+          postVisualMessage('recording-error', { error: err.message })
+        }
+      })
+
+      await agent.start()
+      visualAgentRef.current = agent
+      setIsRecording(true)
+      setModelLoading(null)
+      postVisualMessage('model-ready', { modelId: modelConfig.id })
+
+      postVisualMessage('recording-started', {
+        modelId: modelConfig.id,
+        modelName: modelConfig.name,
+        timestamp: Date.now()
+      })
+
+      // Trigger initial screen observation
+      console.log('[ForgeInspector] Triggering initial screen observation...')
+      agent.trigger('Recording started - analyzing initial screen state').catch(err => {
+        console.warn('[ForgeInspector] Initial observation failed:', err)
+      })
+    } catch (err) {
+      console.error('[ForgeInspector] Error starting recording:', err)
+      postVisualMessage('recording-error', { error: err.message })
+      setRecordingStatus('idle')
+      setModelLoading(null)
+      setState(State.IDLE)
+    }
+  }, [postVisualMessage, geminiApiKey, selectedModelId])
 
   const onContextMenu = React.useCallback(
     function handleContextMenu(
@@ -652,8 +802,20 @@ export function ForgeInspector() {
       // Trigger visual agent observation when recording
       if (state === State.RECORDING && visualAgentRef.current && event.target instanceof HTMLElement) {
         const el = event.target
-        const context = `clicked ${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${el.className ? '.' + el.className.split(' ')[0] : ''}`
-        visualAgentRef.current.trigger(context).catch(err => {
+        // Build rich element context for QA step tracking
+        const elementInfo = {
+          action: 'click',
+          element: {
+            tag: el.tagName.toLowerCase(),
+            text: (getVisibleText(el) || '').substring(0, 100), // Limit length
+            id: el.id || null,
+            role: el.getAttribute('role'),
+            type: el.getAttribute('type'),
+            value: el.value?.substring(0, 50) || null // Limit length
+          },
+          component: getComponentInstances(el, pathModifier)[0] || null
+        }
+        visualAgentRef.current.trigger(elementInfo).catch(err => {
           console.warn('[ForgeInspector] Trigger observation failed:', err)
         })
       }
@@ -673,6 +835,25 @@ export function ForgeInspector() {
           element: clickTarget,
           pathModifier,
         })
+
+        // Trigger visual agent observation for element selection
+        // This happens even if we're in targeting mode - recording can be active
+        if (visualAgentRef.current?.isActive) {
+          const components = getComponentInstances(clickTarget, pathModifier)
+          const firstComponent = components[0]
+          const selectionContext = {
+            action: 'selected',
+            element: {
+              tag: clickTarget.tagName.toLowerCase(),
+              text: getVisibleText(clickTarget)?.slice(0, 50),
+              id: clickTarget.id || null
+            },
+            component: firstComponent ? { name: firstComponent.name } : null
+          }
+          visualAgentRef.current.trigger(selectionContext).catch(err => {
+            console.warn('[ForgeInspector] Selection observation failed:', err)
+          })
+        }
 
         setState(State.IDLE)
         setTrigger(null)
@@ -882,15 +1063,44 @@ export function ForgeInspector() {
           case 'confirm-step-response':
             // Handled by confirmStep tool internally
             break
-          case 'enable-recording':
-            // Could auto-start recording here if needed
+          case 'start-recording':
+            // Parent wants us to start visual recording with model config
+            const payloadConfig = data.payload?.modelConfig
+            const payloadApiKey = data.payload?.apiKey
+            const isCloudModel = payloadConfig?.type === 'cloud'
+
+            console.log('[ForgeInspector] start-recording received. isRecording:', isRecordingRef.current, 'hasWebGPU:', hasWebGPURef.current, 'isCloud:', isCloudModel, 'payload:', data.payload)
+
+            // Cloud models don't need WebGPU, local models do
+            if (!isRecordingRef.current && (hasWebGPURef.current || isCloudModel)) {
+              console.log('[ForgeInspector] Starting recording with config:', payloadConfig?.id || 'default')
+              startRecordingWithModel(payloadConfig, payloadApiKey)
+            } else {
+              const errorMsg = isRecordingRef.current
+                ? 'Already recording'
+                : 'WebGPU not available - please select a cloud model (Gemini)'
+              console.warn('[ForgeInspector] Cannot start recording:', errorMsg)
+              // Send error back to parent
+              window.parent.postMessage({
+                type: 'forge-inspector',
+                action: 'recording-error',
+                payload: { error: errorMsg }
+              }, '*')
+            }
+            break
+          case 'stop-recording':
+            // Parent wants us to stop visual recording
+            console.log('[ForgeInspector] Stopping recording from parent message')
+            if (isRecordingRef.current) {
+              toggleRecording()
+            }
             break
         }
       }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [])
+  }, [startRecordingWithModel, toggleRecording])
 
   // Cleanup visual agent on unmount
   React.useEffect(() => {
@@ -902,8 +1112,11 @@ export function ForgeInspector() {
     }
   }, [])
 
-  // Send ready message to parent when component mounts
+  // Send ready message to parent when capabilities are known
   React.useEffect(function sendReadyMessage() {
+    // Only send after capabilities have been checked to avoid duplicate messages
+    if (!capabilitiesChecked) return
+
     if (
       typeof window !== 'undefined' &&
       window.parent &&
@@ -915,7 +1128,10 @@ export function ForgeInspector() {
           {
             source: MESSAGE_SOURCE,
             version: MESSAGE_VERSION,
-            type: 'ready'
+            type: 'ready',
+            payload: {
+              hasWebGPU: hasWebGPU
+            }
           },
           getTargetOrigin()
         )
@@ -924,7 +1140,7 @@ export function ForgeInspector() {
       }
     }
     // Not logging "Not in iframe" to reduce console noise
-  }, [])
+  }, [capabilitiesChecked, hasWebGPU])
 
   React.useEffect(
     function addEventListenersToWindow() {
@@ -977,12 +1193,13 @@ export function ForgeInspector() {
 
     <${FloatingPortal} key="click-to-component-portal">
       <!-- Record Button - Only when showButton is true AND not in playground -->
+      <!-- Always enabled: cloud models (Gemini) work without WebGPU -->
       ${showButton && !isInPlayground && html`
         <${RecordButton}
           key="click-to-component-record-button"
           recording=${isRecording}
           status=${recordingStatus}
-          disabled=${!hasWebGPU}
+          disabled=${false}
           onToggle=${toggleRecording}
         />
       `}
@@ -994,6 +1211,211 @@ export function ForgeInspector() {
           active=${state === State.HOVER && trigger === Trigger.BUTTON}
           onToggle=${toggleTargeting}
         />
+      `}
+
+      <!-- Model Selection Modal -->
+      ${showModelModal && html`
+        <div
+          key="model-selection-modal"
+          style=${{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            backdropFilter: 'blur(4px)'
+          }}
+          onClick=${(e) => e.target === e.currentTarget && setShowModelModal(false)}
+        >
+          <div style=${{
+            background: '#1a1a2e',
+            borderRadius: '16px',
+            padding: '24px',
+            width: '400px',
+            maxWidth: '90vw',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+            border: '1px solid rgba(255, 255, 255, 0.1)'
+          }}>
+            <h2 style=${{
+              margin: '0 0 20px 0',
+              fontSize: '18px',
+              fontWeight: '600',
+              color: '#fff',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}>Select Vision Model</h2>
+
+            <div style=${{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              ${AVAILABLE_MODELS.map(model => html`
+                <label
+                  key=${model.id}
+                  style=${{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '12px',
+                    padding: '12px',
+                    borderRadius: '10px',
+                    cursor: 'pointer',
+                    background: selectedModelId === model.id ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                    border: selectedModelId === model.id ? '1px solid rgba(99, 102, 241, 0.5)' : '1px solid rgba(255, 255, 255, 0.1)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onClick=${() => setSelectedModelId(model.id)}
+                >
+                  <input
+                    type="radio"
+                    name="model"
+                    checked=${selectedModelId === model.id}
+                    style=${{ marginTop: '4px', accentColor: '#6366f1' }}
+                  />
+                  <div style=${{ flex: 1 }}>
+                    <div style=${{
+                      fontWeight: '500',
+                      color: '#fff',
+                      fontSize: '14px',
+                      fontFamily: 'system-ui, -apple-system, sans-serif'
+                    }}>${model.name}</div>
+                    <div style=${{
+                      fontSize: '12px',
+                      color: 'rgba(255, 255, 255, 0.6)',
+                      marginTop: '4px',
+                      fontFamily: 'system-ui, -apple-system, sans-serif'
+                    }}>${model.description}</div>
+                    <div style=${{
+                      fontSize: '11px',
+                      color: model.type === 'cloud' ? '#10b981' : '#6366f1',
+                      marginTop: '4px',
+                      fontFamily: 'monospace'
+                    }}>${model.size}</div>
+                  </div>
+                </label>
+              `)}
+            </div>
+
+            <!-- API Key input for Gemini -->
+            ${getSelectedModel()?.requiresApiKey && html`
+              <div style=${{ marginTop: '16px' }}>
+                <label style=${{
+                  display: 'block',
+                  fontSize: '12px',
+                  color: 'rgba(255, 255, 255, 0.7)',
+                  marginBottom: '6px',
+                  fontFamily: 'system-ui, -apple-system, sans-serif'
+                }}>Gemini API Key</label>
+                <input
+                  type="password"
+                  value=${geminiApiKey}
+                  onChange=${(e) => setGeminiApiKey(e.target.value)}
+                  placeholder="Enter your API key"
+                  style=${{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    background: 'rgba(0, 0, 0, 0.3)',
+                    color: '#fff',
+                    fontSize: '14px',
+                    fontFamily: 'monospace',
+                    outline: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+            `}
+
+            <div style=${{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+              <button
+                onClick=${() => setShowModelModal(false)}
+                style=${{
+                  flex: 1,
+                  padding: '10px',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  background: 'transparent',
+                  color: '#fff',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  fontFamily: 'system-ui, -apple-system, sans-serif'
+                }}
+              >Cancel</button>
+              <button
+                onClick=${startRecordingWithModel}
+                style=${{
+                  flex: 1,
+                  padding: '10px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: '#6366f1',
+                  color: '#fff',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  fontFamily: 'system-ui, -apple-system, sans-serif'
+                }}
+              >Start Recording</button>
+            </div>
+          </div>
+        </div>
+      `}
+
+      <!-- Loading Progress Overlay -->
+      ${modelLoading && html`
+        <div
+          key="loading-overlay"
+          style=${{
+            position: 'fixed',
+            bottom: '80px',
+            right: '12px',
+            background: '#1a1a2e',
+            borderRadius: '12px',
+            padding: '16px 20px',
+            width: '280px',
+            boxShadow: '0 10px 40px -10px rgba(0, 0, 0, 0.5)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            zIndex: 10000
+          }}
+        >
+          <div style=${{
+            fontSize: '12px',
+            color: 'rgba(255, 255, 255, 0.7)',
+            marginBottom: '8px',
+            fontFamily: 'system-ui, -apple-system, sans-serif'
+          }}>Loading Model...</div>
+          <div style=${{
+            fontSize: '14px',
+            color: '#fff',
+            fontWeight: '500',
+            marginBottom: '12px',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}>${modelLoading.modelId?.split('/').pop() || 'Model'}</div>
+          <div style=${{
+            height: '6px',
+            background: 'rgba(255, 255, 255, 0.1)',
+            borderRadius: '3px',
+            overflow: 'hidden'
+          }}>
+            <div style=${{
+              height: '100%',
+              width: `${Math.round((modelLoading.progress || 0) * 100)}%`,
+              background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+              borderRadius: '3px',
+              transition: 'width 0.3s ease'
+            }}></div>
+          </div>
+          <div style=${{
+            fontSize: '11px',
+            color: 'rgba(255, 255, 255, 0.5)',
+            marginTop: '8px',
+            fontFamily: 'system-ui, -apple-system, sans-serif'
+          }}>${modelLoading.status || 'Initializing...'}</div>
+        </div>
       `}
     </${FloatingPortal}>
   `

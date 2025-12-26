@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Header } from './components/layout'
 import { ChatDrawer, ChatErrorBoundary, RecordingOverlay } from './components/inspector'
 import { ChatMessageData, ElementContent } from './components/inspector/ChatMessage'
+import { ModelSelectionModal, type ModelConfig } from './components/inspector/ModelSelectionModal'
 import { UrlInput, IframeView, ConnectionStatus, type ConnectionState } from './components/external'
 import styles from './components/layout/layout.module.css'
 import externalStyles from './components/external/external.module.css'
@@ -53,7 +54,6 @@ Acceptance:
 export default function PlaygroundPage() {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const demoTimeoutsRef = useRef<NodeJS.Timeout[]>([])
   const isMountedRef = useRef(true)
 
   // State
@@ -66,6 +66,13 @@ export default function PlaygroundPage() {
   const [messages, setMessages] = useState<ChatMessageData[]>([])
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [installPromptCopied, setInstallPromptCopied] = useState(false)
+  const [isModelModalOpen, setIsModelModalOpen] = useState(false)
+  const [modelLoadingProgress, setModelLoadingProgress] = useState<{
+    modelId: string
+    progress: number
+    status: string
+    indeterminate?: boolean
+  } | null>(null)
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const installCopyTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -83,6 +90,31 @@ export default function PlaygroundPage() {
     setMessages((prev) => [...prev, newMessage])
   }, [])
 
+  // Helper to append to last observation or create new one (for streaming tokens)
+  const appendObservation = useCallback((text: string) => {
+    if (!isMountedRef.current) return
+    setMessages((prev) => {
+      const lastMsg = prev[prev.length - 1]
+      // If last message is an observation, append to it
+      if (lastMsg && lastMsg.type === 'observation' && typeof lastMsg.content === 'string') {
+        return [
+          ...prev.slice(0, -1),
+          { ...lastMsg, content: lastMsg.content + text }
+        ]
+      }
+      // Otherwise create a new observation message
+      return [
+        ...prev,
+        {
+          id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          type: 'observation',
+          timestamp: Date.now(),
+          content: text,
+        } as ChatMessageData
+      ]
+    })
+  }, [])
+
   // Clear connection timeout
   const clearConnectionTimeout = useCallback(() => {
     if (connectionTimeoutRef.current) {
@@ -91,11 +123,6 @@ export default function PlaygroundPage() {
     }
   }, [])
 
-  // Clear demo timeouts
-  const clearDemoTimeouts = useCallback(() => {
-    demoTimeoutsRef.current.forEach(clearTimeout)
-    demoTimeoutsRef.current = []
-  }, [])
 
   // Show toast notification
   const showToast = useCallback((message: string) => {
@@ -141,10 +168,14 @@ export default function PlaygroundPage() {
 
       switch (event.data.type) {
         case 'ready':
-          console.log('[Playground] ForgeInspector ready, sending enable-button')
+          console.log('[Playground] ForgeInspector ready, sending enable-button', event.data.payload)
           // Clear the connection timeout since we got a response
           clearConnectionTimeout()
           setConnectionState('connected')
+          // Update WebGPU availability from iframe's capability check
+          if (event.data.payload?.hasWebGPU !== undefined) {
+            setWebGpuAvailable(event.data.payload.hasWebGPU)
+          }
           // Send enable-button message to signal playground mode (inspector hides floating buttons, playground controls selection)
           if (event.source && event.origin) {
             (event.source as Window).postMessage(
@@ -203,6 +234,11 @@ export default function PlaygroundPage() {
           }
           break
 
+        case 'recording-initializing':
+          // Show immediate feedback while model loads
+          addMessage('system', event.data.payload?.message || 'Initializing visual agent...')
+          break
+
         case 'recording-started':
           setIsRecording(true)
           addMessage('recording', 'Recording started. Observing page interactions...')
@@ -210,7 +246,8 @@ export default function PlaygroundPage() {
 
         case 'recording-observation':
           if (event.data.payload) {
-            addMessage('observation', event.data.payload.observation || event.data.payload.text)
+            // Use appendObservation to accumulate streaming tokens into one message
+            appendObservation(event.data.payload.observation || event.data.payload.text || '')
           }
           break
 
@@ -225,13 +262,33 @@ export default function PlaygroundPage() {
             addMessage('error', `Recording error: ${event.data.payload.error}`)
           }
           setIsRecording(false)
+          setModelLoadingProgress(null)
+          setIsModelModalOpen(false)
+          break
+
+        case 'model-loading':
+          // Update loading progress from iframe
+          if (event.data.payload) {
+            setModelLoadingProgress({
+              modelId: event.data.payload.modelId || 'unknown',
+              progress: event.data.payload.progress || 0,
+              status: event.data.payload.status || 'Loading...',
+              indeterminate: event.data.payload.indeterminate ?? false
+            })
+          }
+          break
+
+        case 'model-ready':
+          // Model loaded, close modal
+          setModelLoadingProgress(null)
+          setIsModelModalOpen(false)
           break
       }
     }
 
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [addMessage, clearConnectionTimeout, showToast])
+  }, [addMessage, appendObservation, clearConnectionTimeout, showToast])
 
   // Handle URL load
   const handleLoadUrl = useCallback((newUrl: string) => {
@@ -274,6 +331,7 @@ export default function PlaygroundPage() {
 
   // Send message to iframe
   const sendToIframe = useCallback((type: string, payload?: unknown) => {
+    console.log('[Playground] sendToIframe called:', type, 'iframe exists:', !!iframeRef.current?.contentWindow)
     if (iframeRef.current?.contentWindow) {
       // Use '*' for targetOrigin since iframe may have redirected
       // This is safe because we validate incoming messages by source (window reference)
@@ -286,6 +344,9 @@ export default function PlaygroundPage() {
         },
         '*'
       )
+      console.log('[Playground] postMessage sent:', type)
+    } else {
+      console.error('[Playground] Cannot send to iframe - contentWindow not available')
     }
   }, [])
 
@@ -302,36 +363,33 @@ export default function PlaygroundPage() {
     }
   }, [isSelecting, sendToIframe, addMessage])
 
-  // Handle recording toggle
+  // Handle recording toggle - shows model selection modal or stops recording
   const handleToggleRecording = useCallback(() => {
     if (isRecording) {
-      // Stop recording - clear any pending demo timeouts
-      clearDemoTimeouts()
-      setIsRecording(false)
+      // Stop recording - send message to iframe
+      sendToIframe('stop-recording')
+      // Note: isRecording state will be updated when we receive recording-stopped message
     } else {
-      // Start recording
-      setIsRecording(true)
-      setMessages([]) // Clear messages on new recording
-      clearDemoTimeouts() // Clear any existing demo timeouts
-
-      // Demo observations since recording requires the visual agent
-      const demoObservations = [
-        'Page loaded, analyzing initial state...',
-        'Detected interactive form with 3 input fields',
-        'Button states component shows 5 variants',
-        'Data table has 3 rows with sortable columns',
-      ]
-
-      addMessage('recording', 'Recording started. Observing page interactions...')
-
-      demoObservations.forEach((text, index) => {
-        const timeoutId = setTimeout(() => {
-          addMessage('observation', text)
-        }, (index + 1) * 2000)
-        demoTimeoutsRef.current.push(timeoutId)
-      })
+      // Show model selection modal
+      setIsModelModalOpen(true)
     }
-  }, [isRecording, addMessage, clearDemoTimeouts])
+  }, [isRecording, sendToIframe])
+
+  // Handle starting recording with selected model
+  const handleStartRecording = useCallback((config: ModelConfig, apiKey?: string) => {
+    console.log('[Playground] handleStartRecording called with config:', config.id, 'apiKey:', apiKey ? 'provided' : 'none')
+    setMessages([]) // Clear messages on new recording
+    console.log('[Playground] Sending start-recording to iframe')
+    sendToIframe('start-recording', { modelConfig: config, apiKey })
+    // Modal stays open to show loading progress - closes on 'model-ready' or 'recording-error'
+  }, [sendToIframe])
+
+  // Handle model modal close
+  const handleCloseModelModal = useCallback(() => {
+    if (!modelLoadingProgress) {
+      setIsModelModalOpen(false)
+    }
+  }, [modelLoadingProgress])
 
   // Handle copy message
   const handleCopyMessage = useCallback((content: string) => {
@@ -379,7 +437,6 @@ export default function PlaygroundPage() {
     return () => {
       isMountedRef.current = false
       clearConnectionTimeout()
-      clearDemoTimeouts()
       if (toastTimeoutRef.current) {
         clearTimeout(toastTimeoutRef.current)
       }
@@ -387,7 +444,7 @@ export default function PlaygroundPage() {
         clearTimeout(installCopyTimeoutRef.current)
       }
     }
-  }, [clearConnectionTimeout, clearDemoTimeouts])
+  }, [clearConnectionTimeout])
 
   return (
     <>
@@ -473,6 +530,7 @@ export default function PlaygroundPage() {
           isSelecting={isSelecting}
           isRecording={isRecording}
           webGpuAvailable={webGpuAvailable}
+          hasIframeLoaded={url !== null}
           onToggleSelection={handleToggleSelection}
           onToggleRecording={handleToggleRecording}
           onClose={handleCloseDrawer}
@@ -500,6 +558,13 @@ export default function PlaygroundPage() {
           {toastMessage}
         </div>
       )}
+
+      <ModelSelectionModal
+        isOpen={isModelModalOpen}
+        onClose={handleCloseModelModal}
+        onStartRecording={handleStartRecording}
+        loadingProgress={modelLoadingProgress}
+      />
     </>
   )
 }

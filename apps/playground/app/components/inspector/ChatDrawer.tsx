@@ -11,6 +11,7 @@ interface ChatDrawerProps {
   isSelecting: boolean
   isRecording: boolean
   webGpuAvailable: boolean
+  hasIframeLoaded: boolean
   onToggleSelection: () => void
   onToggleRecording: () => void
   onClose: () => void
@@ -24,6 +25,7 @@ export function ChatDrawer({
   isSelecting,
   isRecording,
   webGpuAvailable,
+  hasIframeLoaded,
   onToggleSelection,
   onToggleRecording,
   onClose,
@@ -125,8 +127,8 @@ export function ChatDrawer({
             <button
               className={`${styles.chatDrawerButton} ${styles.chatDrawerButtonCool} ${isRecording ? styles.chatDrawerButtonRecording : ''}`}
               onClick={onToggleRecording}
-              disabled={!webGpuAvailable && !isRecording}
-              title={!webGpuAvailable ? 'WebGPU required for recording' : undefined}
+              disabled={!hasIframeLoaded && !isRecording}
+              title={!hasIframeLoaded ? 'Load a page first' : undefined}
             >
               {isRecording ? (
                 <>

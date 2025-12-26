@@ -74,6 +74,7 @@ typings/
 
 # dotenv environment variables file
 .env
+.env.local
 .env.test
 
 # parcel-bundler cache (https://parceljs.org/)
@@ -108,4 +109,5 @@ dist
 .tern-port
 .npmrc
 apps/playground/out/
+apps/playground/public/visual-agent/
 packages/forge-inspector/playground/
