@@ -425,6 +425,7 @@ export function ForgeInspector() {
   const [isRecording, setIsRecording] = React.useState(false)
   const [recordingStatus, setRecordingStatus] = React.useState('idle')
   const [hasWebGPU, setHasWebGPU] = React.useState(false)
+  const [capabilitiesChecked, setCapabilitiesChecked] = React.useState(false)
   const visualAgentRef = React.useRef(null)
 
   // Model selection modal state
@@ -452,10 +453,12 @@ export function ForgeInspector() {
       console.log('[ForgeInspector] Visual agent capabilities:', JSON.stringify(caps))
       console.log('[ForgeInspector] WebGPU available:', caps.webgpu)
       setHasWebGPU(caps.webgpu)
+      setCapabilitiesChecked(true)
     }).catch((err) => {
       // Visual agent not available, WebGPU features disabled
       console.error('[ForgeInspector] Capability check failed:', err)
       setHasWebGPU(false)
+      setCapabilitiesChecked(true)
     })
   }, [])
 
@@ -806,7 +809,7 @@ export function ForgeInspector() {
           action: 'click',
           element: {
             tag: el.tagName.toLowerCase(),
-            text: getVisibleText(el).substring(0, 100), // Limit length
+            text: (getVisibleText(el) || '').substring(0, 100), // Limit length
             id: el.id || null,
             role: el.getAttribute('role'),
             type: el.getAttribute('type'),
@@ -834,6 +837,25 @@ export function ForgeInspector() {
           element: clickTarget,
           pathModifier,
         })
+
+        // Trigger visual agent observation for element selection
+        // This happens even if we're in targeting mode - recording can be active
+        if (visualAgentRef.current?.isActive) {
+          const components = getComponentInstances(clickTarget, pathModifier)
+          const firstComponent = components[0]
+          const selectionContext = {
+            action: 'selected',
+            element: {
+              tag: clickTarget.tagName.toLowerCase(),
+              text: getVisibleText(clickTarget)?.slice(0, 50),
+              id: clickTarget.id || null
+            },
+            component: firstComponent ? { name: firstComponent.name } : null
+          }
+          visualAgentRef.current.trigger(selectionContext).catch(err => {
+            console.warn('[ForgeInspector] Selection observation failed:', err)
+          })
+        }
 
         setState(State.IDLE)
         setTrigger(null)
@@ -1094,8 +1116,9 @@ export function ForgeInspector() {
 
   // Send ready message to parent when capabilities are known
   React.useEffect(function sendReadyMessage() {
-    // Only send after we've checked capabilities (hasWebGPU will be false initially, then updated)
-    // This effect runs on hasWebGPU change, so we send when we know the actual value
+    // Only send after capabilities have been checked to avoid duplicate messages
+    if (!capabilitiesChecked) return
+
     if (
       typeof window !== 'undefined' &&
       window.parent &&
@@ -1119,7 +1142,7 @@ export function ForgeInspector() {
       }
     }
     // Not logging "Not in iframe" to reduce console noise
-  }, [hasWebGPU])
+  }, [capabilitiesChecked, hasWebGPU])
 
   React.useEffect(
     function addEventListenersToWindow() {

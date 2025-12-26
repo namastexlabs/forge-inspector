@@ -6,9 +6,9 @@
  * Handles context pruning, step tracking, and report generation.
  */
 
-// CDN imports for cloud models only
-import { streamText, generateText } from 'https://cdn.jsdelivr.net/npm/ai@6/+esm'
-import { createGoogleGenerativeAI } from 'https://cdn.jsdelivr.net/npm/@ai-sdk/google@3/+esm'
+// AI SDK imports are loaded dynamically to avoid "illegal path" errors
+// when VisualAgentOrchestrator.js is imported in browser environments.
+// The CDN ESM bundles contain code that attempts filesystem access on load.
 import { createConfirmStepTool } from './tools/confirmStep.js'
 import ScreenCaptureService from './ScreenCaptureService.js'
 
@@ -90,8 +90,14 @@ export class VisualAgentOrchestrator {
   /** @type {Object} */
   #modelConfig
 
-  /** @type {Map<string, { resolve: Function, reject: Function, text: string }>} */
+  /** @type {Map<string, { resolve: Function, reject: Function, text: string, context?: string|Object }>} */
   #pendingInferences = new Map()
+
+  /**
+   * Common hallucination patterns from Florence-2
+   * @type {RegExp}
+   */
+  static #HALLUCINATION_PATTERN = /\b(Fick|FICK|POR|COSSOLE|COSSOle|Unanswerable|unanswerable)\b/gi
 
   /**
    * @param {OrchestratorOptions} options
@@ -119,6 +125,69 @@ export class VisualAgentOrchestrator {
         console.log('[VisualAgent] Confirmation request:', { observation, question, severity })
       }
     })
+  }
+
+  /**
+   * Clean model output by removing hallucinated garbage
+   * @param {string} text - Raw model output
+   * @returns {string} Cleaned text
+   */
+  #cleanModelOutput(text) {
+    if (!text) return ''
+
+    return text
+      // Remove hallucination patterns
+      .replace(VisualAgentOrchestrator.#HALLUCINATION_PATTERN, '')
+      // Remove Florence-2 task tokens
+      .replace(/<[^>]+>/g, '')
+      // Collapse multiple spaces/newlines
+      .replace(/\s+/g, ' ')
+      .trim()
+      // Limit length to prevent rambling
+      .slice(0, 200)
+  }
+
+  /**
+   * Format context into a human-readable action description
+   * @param {string|Object} triggerContext
+   * @returns {string}
+   */
+  #formatContextAsAction(triggerContext) {
+    if (!triggerContext) return 'Screen state'
+
+    if (typeof triggerContext === 'string') {
+      return triggerContext
+    }
+
+    // Rich element context object
+    const ctx = triggerContext
+    const action = ctx.action || 'interaction'
+    const el = ctx.element || {}
+
+    let desc = action.charAt(0).toUpperCase() + action.slice(1)
+
+    if (el.text) {
+      desc += ` "${el.text.slice(0, 30)}${el.text.length > 30 ? '...' : ''}"`
+    } else if (el.tag) {
+      desc += ` <${el.tag}>`
+    }
+
+    if (ctx.component?.name) {
+      desc += ` in ${ctx.component.name}`
+    }
+
+    return desc
+  }
+
+  /**
+   * Format as a QA step
+   * @param {number} stepNumber
+   * @param {string} action - What triggered this step
+   * @param {string} observation - What was observed
+   * @returns {string}
+   */
+  #formatAsStep(stepNumber, action, observation) {
+    return `STEP ${stepNumber}: ${action}\n→ ${observation}`
   }
 
   /**
@@ -229,6 +298,7 @@ export class VisualAgentOrchestrator {
 
   /**
    * Set up permanent worker message handler for inference
+   * Accumulates tokens and emits complete formatted steps on stream-end
    */
   #setupWorkerHandler() {
     this.#worker.addEventListener('message', (event) => {
@@ -242,19 +312,29 @@ export class VisualAgentOrchestrator {
           break
 
         case 'token':
+          // Accumulate tokens silently - don't emit until complete
           if (pending) {
             pending.text += data
-            if (this.#options.onObservation) {
-              this.#options.onObservation(data)
-            }
           }
           break
 
         case 'stream-end':
           if (pending) {
             console.log('[VisualAgent] Inference complete:', requestId, 'tokens:', data?.tokenCount)
+
+            // Clean and format the complete observation
+            const rawText = pending.text
+            const cleanText = this.#cleanModelOutput(rawText)
+            const action = this.#formatContextAsAction(pending.context)
+            const formattedStep = this.#formatAsStep(this.#stepCount, action, cleanText)
+
+            // Emit the COMPLETE formatted step (not individual tokens)
+            if (this.#options.onObservation) {
+              this.#options.onObservation(formattedStep)
+            }
+
             this.#pendingInferences.delete(requestId)
-            pending.resolve(pending.text)
+            pending.resolve(formattedStep)
           }
           break
 
@@ -278,13 +358,17 @@ export class VisualAgentOrchestrator {
 
   /**
    * Create cloud model (Gemini)
-   * @returns {any}
+   * Uses dynamic import to avoid "illegal path" errors from CDN ESM bundles
+   * @returns {Promise<any>}
    */
-  #createCloudModel() {
+  async #createCloudModel() {
     const apiKey = localStorage.getItem(GEMINI_KEY_STORAGE)
     if (!apiKey) {
       throw new Error('Gemini API key not found. Please set it in the model selection modal.')
     }
+
+    // Dynamic import to avoid filesystem errors on module load
+    const { createGoogleGenerativeAI } = await import('https://cdn.jsdelivr.net/npm/@ai-sdk/google@3/+esm')
     const google = createGoogleGenerativeAI({ apiKey })
     return google(this.#modelConfig.providerId || 'gemini-2.0-flash')
   }
@@ -296,7 +380,7 @@ export class VisualAgentOrchestrator {
     this.#setStatus('initializing')
 
     if (this.#modelConfig.type === 'cloud') {
-      this.#cloudModel = this.#createCloudModel()
+      this.#cloudModel = await this.#createCloudModel()
     } else {
       await this.#initLocalModel()
     }
@@ -315,10 +399,21 @@ export class VisualAgentOrchestrator {
 
   /**
    * Start a recording session with live screen capture
+   * For cloud models, uses document capture (html2canvas) instead of getDisplayMedia
    */
   async startLive() {
     await this.#startSession()
-    await this.#capture.startLive()
+
+    // Cloud models use document capture (no permission dialog)
+    // Local models use getDisplayMedia for full screen capture
+    if (this.#modelConfig.type === 'cloud') {
+      console.log('[VisualAgent] Using document capture for cloud model')
+      await this.#capture.startDocumentCapture()
+    } else {
+      console.log('[VisualAgent] Using screen capture for local model')
+      await this.#capture.startLive()
+    }
+
     this.#setStatus('recording')
   }
 
@@ -378,20 +473,21 @@ export class VisualAgentOrchestrator {
    * Run inference with local worker
    * @param {Uint8Array} imageData
    * @param {string} prompt
+   * @param {string|Object} [context] - Trigger context for step formatting
    * @returns {Promise<string>}
    */
-  async #runLocalInference(imageData, prompt) {
+  async #runLocalInference(imageData, prompt, context) {
     const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 
     return new Promise((resolve, reject) => {
-      this.#pendingInferences.set(requestId, { resolve, reject, text: '' })
+      this.#pendingInferences.set(requestId, { resolve, reject, text: '', context })
 
       this.#worker.postMessage({
         type: 'inference',
         requestId,
         imageData,
         prompt,
-        maxTokens: 256
+        maxTokens: 64  // Reduced from 256 - Florence-2 hallucinates more with longer outputs
       })
     })
   }
@@ -403,6 +499,9 @@ export class VisualAgentOrchestrator {
    * @returns {Promise<string>}
    */
   async #runCloudInference(imageData, prompt) {
+    // Dynamic import to avoid filesystem errors on module load
+    const { streamText } = await import('https://cdn.jsdelivr.net/npm/ai@6/+esm')
+
     const contextMessages = this.#getContextMessages()
 
     // Add the new user message with image
@@ -411,7 +510,8 @@ export class VisualAgentOrchestrator {
       content: [
         {
           type: 'image',
-          image: imageData
+          image: imageData,
+          mediaType: 'image/jpeg'
         },
         {
           type: 'text',
@@ -422,29 +522,39 @@ export class VisualAgentOrchestrator {
 
     let observationText = ''
 
-    const result = await streamText({
-      model: this.#cloudModel,
-      messages: [...contextMessages, userMessage],
-      tools: {
-        confirmStep: this.#confirmTool
-      },
-      maxSteps: 3,
-      onStepFinish: async ({ text }) => {
-        if (text) {
-          observationText += text
+    console.log('[VisualAgent] Starting cloud inference with model:', this.#modelConfig.providerId)
+    console.log('[VisualAgent] Image data size:', imageData?.length, 'bytes')
+
+    try {
+      // Note: Tools disabled for now - model was outputting tool call JSON as text
+      // instead of properly using tools. Re-enable once tool use is working correctly.
+      const result = await streamText({
+        model: this.#cloudModel,
+        messages: [...contextMessages, userMessage],
+        // tools: {
+        //   confirmStep: this.#confirmTool
+        // },
+        // maxSteps: 3,
+        onStepFinish: async ({ text }) => {
+          console.log('[VisualAgent] Step finished, text:', text?.slice(0, 100))
+          if (text) {
+            observationText += text
+          }
         }
-      }
-    })
+      })
 
-    // Consume the stream
-    for await (const chunk of result.textStream) {
-      observationText += chunk
-      if (this.#options.onObservation) {
-        this.#options.onObservation(chunk)
+      // Consume the stream - accumulate text without emitting tokens
+      // Formatting and emission happens in trigger() after inference completes
+      for await (const chunk of result.textStream) {
+        observationText += chunk
       }
+
+      console.log('[VisualAgent] Cloud inference complete, result length:', observationText.length)
+      return observationText
+    } catch (err) {
+      console.error('[VisualAgent] Cloud inference error:', err.message, err)
+      throw err
     }
-
-    return observationText
   }
 
   /**
@@ -485,11 +595,22 @@ ${ctx.component ? `Component: ${ctx.component}` : ''}`
       }
 
       // Run inference based on model type
+      // For local models, formatting is done in the worker handler
+      // For cloud models, we format here
       let observationText
       if (this.#modelConfig.type === 'cloud') {
-        observationText = await this.#runCloudInference(frame.data, prompt)
+        const rawText = await this.#runCloudInference(frame.data, prompt)
+        const cleanText = this.#cleanModelOutput(rawText)
+        const action = this.#formatContextAsAction(triggerContext)
+        observationText = this.#formatAsStep(this.#stepCount, action, cleanText)
+
+        // Emit the complete formatted step for cloud models
+        if (this.#options.onObservation) {
+          this.#options.onObservation(observationText)
+        }
       } else {
-        observationText = await this.#runLocalInference(frame.data, prompt)
+        // Pass context to local inference for formatting in worker handler
+        observationText = await this.#runLocalInference(frame.data, prompt, triggerContext)
       }
 
       // Build user message for context

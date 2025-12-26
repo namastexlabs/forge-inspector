@@ -32,17 +32,6 @@ export const AVAILABLE_MODELS = [
     size: '~770MB'
   },
   {
-    id: 'ministral-3b',
-    name: 'Ministral 3B',
-    type: 'local',
-    modelId: 'mistralai/Ministral-3-3B-Instruct-2512-ONNX',
-    modelClass: 'AutoModelForImageTextToText',
-    dtype: 'q4',
-    device: 'webgpu',
-    description: 'Mistral vision model. 3.4B LM + 0.4B Vision Encoder.',
-    size: '~2GB'
-  },
-  {
     id: 'gemini-flash',
     name: 'Gemini 3 Flash',
     type: 'cloud',

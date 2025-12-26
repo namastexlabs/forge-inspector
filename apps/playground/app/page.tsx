@@ -530,6 +530,7 @@ export default function PlaygroundPage() {
           isSelecting={isSelecting}
           isRecording={isRecording}
           webGpuAvailable={webGpuAvailable}
+          hasIframeLoaded={url !== null}
           onToggleSelection={handleToggleSelection}
           onToggleRecording={handleToggleRecording}
           onClose={handleCloseDrawer}

@@ -38,9 +38,7 @@ let loadedModelId = ''
 const activeRequests = new Set()
 
 /**
- * Model configurations with fallbacks
- * Florence-2: Uses AutoModelForImageTextToText (NOT AutoModelForVision2Seq)
- * Ministral-3B: 3.4B LM + 0.4B Vision Encoder
+ * Model configuration - Florence-2 only
  */
 const MODEL_CONFIG = {
   primary: {
@@ -52,15 +50,7 @@ const MODEL_CONFIG = {
     },
     device: 'webgpu',
     modelClass: 'AutoModelForImageTextToText'
-  },
-  fallbacks: [
-    {
-      id: 'mistralai/Ministral-3-3B-Instruct-2512-ONNX',
-      dtype: 'q4',
-      device: 'webgpu',
-      modelClass: 'AutoModelForImageTextToText'
-    }
-  ]
+  }
 }
 
 /**
@@ -113,148 +103,137 @@ function calculateProgress(progress, modelId, fallbackStatus = 'Loading...') {
 }
 
 /**
- * Initialize model with automatic fallback
+ * Initialize model
  * @param {Object} options
  * @param {string} [options.modelId] - Override model ID
  * @param {string} [options.dtype] - Override dtype
  * @param {string} [options.device] - Override device
  */
 async function initModel(options = {}) {
-  // Build config list: user's requested model first, then fallbacks
-  const userConfig = options.modelId ? {
+  // Use user config or default to Florence-2
+  const config = options.modelId ? {
     id: options.modelId,
     dtype: options.dtype || 'q4',
     device: options.device || 'webgpu',
     modelClass: options.modelClass || 'AutoModelForVision2Seq'
-  } : null
+  } : MODEL_CONFIG.primary
 
-  const configs = userConfig
-    ? [userConfig, ...MODEL_CONFIG.fallbacks]
-    : [MODEL_CONFIG.primary, ...MODEL_CONFIG.fallbacks]
+  const modelId = config.id
+  const dtype = config.dtype
+  const device = config.device
+  const modelClass = config.modelClass || 'AutoModelForVision2Seq'
 
-  for (const config of configs) {
-    const modelId = config.id
-    const dtype = config.dtype
-    const device = config.device
-    const modelClass = config.modelClass || 'AutoModelForVision2Seq'
-
-    // Skip WebGPU configs if not available
-    if (device === 'webgpu' && !('gpu' in navigator)) {
-      self.postMessage({
-        type: 'log',
-        data: `[Worker] Skipping ${modelId} - WebGPU not available in this worker`
-      })
-      continue
-    }
-
-    try {
-      self.postMessage({
-        type: 'loading',
-        data: { modelId, progress: 0, status: `Loading ${modelId.split('/').pop()} (${device})...` }
-      })
-
-      self.postMessage({
-        type: 'log',
-        data: `[Worker] Attempting to load ${modelId} with dtype=${dtype}, device=${device}`
-      })
-
-      // Load processor
-      // @ts-ignore - transformers.js types are incomplete
-      processor = await AutoProcessor.from_pretrained(modelId, {
-        progress_callback: (/** @type {any} */ progress) => {
-          const calc = calculateProgress(progress, modelId, 'Loading processor...')
-          self.postMessage({
-            type: 'loading',
-            data: {
-              modelId,
-              progress: calc.progress,
-              status: calc.status,
-              indeterminate: calc.indeterminate
-            }
-          })
-        }
-      })
-
-      // Load tokenizer separately (FastVLM doesn't expose tokenizer on processor)
-      // @ts-ignore - transformers.js types are incomplete
-      tokenizer = await AutoTokenizer.from_pretrained(modelId, {
-        progress_callback: (/** @type {any} */ progress) => {
-          const calc = calculateProgress(progress, modelId, 'Loading tokenizer...')
-          self.postMessage({
-            type: 'loading',
-            data: {
-              modelId,
-              progress: calc.progress,
-              status: calc.status,
-              indeterminate: calc.indeterminate
-            }
-          })
-        }
-      })
-
-      // Load model with correct class
-      // Florence-2 needs AutoModelForImageTextToText, others use AutoModelForVision2Seq
-      const ModelClass = modelClass === 'AutoModelForImageTextToText'
-        ? AutoModelForImageTextToText
-        : AutoModelForVision2Seq
-
-      self.postMessage({
-        type: 'log',
-        data: `[Worker] Using ${modelClass} for ${modelId}`
-      })
-
-      // @ts-ignore - transformers.js types are incomplete
-      model = await ModelClass.from_pretrained(modelId, {
-        dtype: /** @type {any} */ (dtype),
-        device: /** @type {any} */ (device),
-        progress_callback: (/** @type {any} */ progress) => {
-          const calc = calculateProgress(progress, modelId, 'Loading model...')
-          self.postMessage({
-            type: 'loading',
-            data: {
-              modelId,
-              progress: calc.progress,
-              status: calc.status,
-              indeterminate: calc.indeterminate
-            }
-          })
-        }
-      })
-
-      loadedModelId = modelId
-
-      self.postMessage({
-        type: 'ready',
-        data: { modelId, dtype, device }
-      })
-
-      return
-    } catch (err) {
-      // Better error message parsing for numeric error codes (OOM, WebGPU errors)
-      let errorMsg = 'Unknown error'
-      if (err instanceof Error) {
-        errorMsg = err.message || err.stack || String(err)
-      } else if (typeof err === 'number') {
-        // OOM or WebGPU error codes from ONNX runtime
-        errorMsg = `WebGPU/ONNX error code: ${err} (likely out of memory - try a smaller model)`
-      } else {
-        errorMsg = String(err)
-      }
-
-      self.postMessage({
-        type: 'log',
-        data: `[Worker] Failed to load ${modelId} (${device}): ${errorMsg}`
-      })
-      console.error(`[Worker] Model load error:`, err)
-      // Try next fallback
-    }
+  // Check WebGPU availability
+  if (device === 'webgpu' && !('gpu' in navigator)) {
+    self.postMessage({
+      type: 'error',
+      data: `WebGPU not available - cannot load ${modelId}`
+    })
+    return
   }
 
-  // All models failed
-  self.postMessage({
-    type: 'error',
-    data: 'Failed to load any VLM model'
-  })
+  try {
+    self.postMessage({
+      type: 'loading',
+      data: { modelId, progress: 0, status: `Loading ${modelId.split('/').pop()} (${device})...` }
+    })
+
+    self.postMessage({
+      type: 'log',
+      data: `[Worker] Attempting to load ${modelId} with dtype=${JSON.stringify(dtype)}, device=${device}`
+    })
+
+    // Load processor
+    // @ts-ignore - transformers.js types are incomplete
+    processor = await AutoProcessor.from_pretrained(modelId, {
+      progress_callback: (/** @type {any} */ progress) => {
+        const calc = calculateProgress(progress, modelId, 'Loading processor...')
+        self.postMessage({
+          type: 'loading',
+          data: {
+            modelId,
+            progress: calc.progress,
+            status: calc.status,
+            indeterminate: calc.indeterminate
+          }
+        })
+      }
+    })
+
+    // Load tokenizer
+    // @ts-ignore - transformers.js types are incomplete
+    tokenizer = await AutoTokenizer.from_pretrained(modelId, {
+      progress_callback: (/** @type {any} */ progress) => {
+        const calc = calculateProgress(progress, modelId, 'Loading tokenizer...')
+        self.postMessage({
+          type: 'loading',
+          data: {
+            modelId,
+            progress: calc.progress,
+            status: calc.status,
+            indeterminate: calc.indeterminate
+          }
+        })
+      }
+    })
+
+    // Load model with correct class
+    const ModelClass = modelClass === 'AutoModelForImageTextToText'
+      ? AutoModelForImageTextToText
+      : AutoModelForVision2Seq
+
+    self.postMessage({
+      type: 'log',
+      data: `[Worker] Using ${modelClass} for ${modelId}`
+    })
+
+    const modelOptions = {
+      device: /** @type {any} */ (device),
+      progress_callback: (/** @type {any} */ progress) => {
+        const calc = calculateProgress(progress, modelId, 'Loading model...')
+        self.postMessage({
+          type: 'loading',
+          data: {
+            modelId,
+            progress: calc.progress,
+            status: calc.status,
+            indeterminate: calc.indeterminate
+          }
+        })
+      }
+    }
+
+    if (dtype) {
+      modelOptions.dtype = /** @type {any} */ (dtype)
+    }
+
+    // @ts-ignore - transformers.js types are incomplete
+    model = await ModelClass.from_pretrained(modelId, modelOptions)
+
+    loadedModelId = modelId
+
+    self.postMessage({
+      type: 'ready',
+      data: { modelId, dtype, device }
+    })
+  } catch (err) {
+    // Better error message parsing for numeric error codes (OOM, WebGPU errors)
+    let errorMsg = 'Unknown error'
+    if (err instanceof Error) {
+      errorMsg = err.message || err.stack || String(err)
+    } else if (typeof err === 'number') {
+      // OOM or WebGPU error codes from ONNX runtime
+      errorMsg = `WebGPU/ONNX error code: ${err} (likely out of memory - try a smaller model)`
+    } else {
+      errorMsg = String(err)
+    }
+
+    self.postMessage({
+      type: 'error',
+      data: `Failed to load ${modelId}: ${errorMsg}`
+    })
+    console.error(`[Worker] Model load error:`, err)
+  }
 }
 
 /**
@@ -263,9 +242,9 @@ async function initModel(options = {}) {
  * @param {string} params.requestId - Unique request identifier
  * @param {Uint8Array} params.imageData - JPEG image data
  * @param {string} params.prompt - Text prompt (ignored for Florence-2)
- * @param {number} [params.maxTokens=256] - Max tokens to generate
+ * @param {number} [params.maxTokens=64] - Max tokens to generate
  */
-async function runInference({ requestId, imageData, prompt, maxTokens = 256 }) {
+async function runInference({ requestId, imageData, prompt, maxTokens = 64 }) {
   if (!model || !processor) {
     self.postMessage({
       type: 'error',
@@ -289,13 +268,12 @@ async function runInference({ requestId, imageData, prompt, maxTokens = 256 }) {
     self.postMessage({ type: 'stream-start', requestId })
 
     let tokenCount = 0
-    let fullText = ''
 
     // Create streamer with callback bridge
     // @ts-ignore - transformers.js types are incomplete
     const streamer = new TextStreamer(tokenizer, {
       skip_prompt: true,
-      skip_special_tokens: false,  // Keep tokens for Florence-2 post-processing
+      skip_special_tokens: false,
       callback_function: (/** @type {string} */ text) => {
         // Check if request was aborted
         if (!activeRequests.has(requestId)) {
@@ -303,7 +281,6 @@ async function runInference({ requestId, imageData, prompt, maxTokens = 256 }) {
         }
 
         tokenCount++
-        fullText += text
 
         // For Florence-2, strip task tokens before sending
         let cleanText = text
@@ -321,11 +298,11 @@ async function runInference({ requestId, imageData, prompt, maxTokens = 256 }) {
       }
     })
 
-    // Prepare inputs - Florence-2 uses task tokens, not free-form prompts
+    // Prepare inputs based on model type
     // @ts-ignore - transformers.js types are incomplete
     let inputs
     if (isFlorence) {
-      // Florence-2 task token for detailed image description
+      // Florence-2 uses task tokens, not free-form prompts
       const task = '<MORE_DETAILED_CAPTION>'
       inputs = await processor(image, task)
     } else {
@@ -334,13 +311,15 @@ async function runInference({ requestId, imageData, prompt, maxTokens = 256 }) {
     }
 
     // Run generation
-    // @ts-ignore - transformers.js types are incomplete
-    const output = await model.generate({
+    const generateOptions = {
       ...inputs,
       max_new_tokens: maxTokens,
       streamer,
       do_sample: false
-    })
+    }
+
+    // @ts-ignore - transformers.js types are incomplete
+    await model.generate(generateOptions)
 
     // Check if aborted
     if (!activeRequests.has(requestId)) {

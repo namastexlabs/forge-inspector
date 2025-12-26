@@ -6,7 +6,7 @@
  */
 
 /**
- * @typedef {'live' | 'file' | 'url'} CaptureSource
+ * @typedef {'live' | 'file' | 'url' | 'document'} CaptureSource
  * @typedef {Object} CaptureFrame
  * @property {Uint8Array} data - JPEG image data
  * @property {number} timestamp - Capture timestamp
@@ -85,6 +85,38 @@ export class ScreenCaptureService {
       }
       throw err
     }
+  }
+
+  /**
+   * Initialize document capture mode (for cloud models)
+   * Uses html2canvas to capture screenshots without getDisplayMedia
+   * @returns {Promise<void>}
+   */
+  async startDocumentCapture() {
+    if (this.#isActive) {
+      await this.stop()
+    }
+
+    // Load html2canvas from CDN
+    if (!window.html2canvas) {
+      const script = document.createElement('script')
+      script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js'
+      await new Promise((resolve, reject) => {
+        script.onload = resolve
+        script.onerror = () => reject(new Error('Failed to load html2canvas'))
+        document.head.appendChild(script)
+      })
+    }
+
+    // Create initial canvas with viewport size
+    this.#canvas = new OffscreenCanvas(
+      window.innerWidth,
+      window.innerHeight
+    )
+
+    this.#source = 'document'
+    this.#isActive = true
+    console.log('[ScreenCapture] Document capture mode initialized')
   }
 
   /**
@@ -189,6 +221,39 @@ export class ScreenCaptureService {
       throw new Error('ScreenCaptureService not active')
     }
 
+    // Handle document capture mode using html2canvas
+    if (this.#source === 'document') {
+      if (!window.html2canvas) {
+        throw new Error('html2canvas not loaded')
+      }
+
+      // Capture the document body
+      const canvas = await window.html2canvas(document.body, {
+        backgroundColor: null,
+        scale: 1, // Use 1x scale for performance
+        logging: false,
+        useCORS: true,
+        allowTaint: true
+      })
+
+      // Convert to JPEG blob
+      const blob = await new Promise((resolve) => {
+        canvas.toBlob(resolve, 'image/jpeg', quality)
+      })
+
+      // Convert blob to Uint8Array
+      const arrayBuffer = await blob.arrayBuffer()
+      const data = new Uint8Array(arrayBuffer)
+
+      return {
+        data,
+        timestamp: Date.now(),
+        width: canvas.width,
+        height: canvas.height
+      }
+    }
+
+    // Original video/image capture logic
     if (!this.#canvas) {
       throw new Error('Canvas not initialized')
     }
