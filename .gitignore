@@ -109,4 +109,5 @@ dist
 .tern-port
 .npmrc
 apps/playground/out/
+apps/playground/public/visual-agent/
 packages/forge-inspector/playground/
